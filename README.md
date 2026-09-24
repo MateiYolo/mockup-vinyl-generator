@@ -1,0 +1,18 @@
+# Vinyl Mockup Studio
+
+Local 3D mockup generator for vinyl releases: sleeve, insert, labels and disc, rendered with Three.js.
+
+```bash
+npm install
+npm run dev   # http://localhost:5178
+```
+
+- **Scene presets**: flat stack, sleeve + vinyl, standing, full bundle, vinyl only, vinyl hero, front cover, back cover, front + back, insert.
+- **Vinyl**: artwork texture (top-down PNG of the disc), black, white, clear, smoke, tinted, colour, procedural marble, splatter and split. Grooves and the anisotropic sheen are procedural.
+- **Artwork**: drop images on the slots. Defaults are in `public/assets/`.
+- **Realism**: sleeve board is rounded, slightly warped and fibre-bumped, with ring wear, edge wear and uneven paper tone (Wear / Warp sliders). Vinyl has music-dependent groove banding, track gaps, micro-scratches, fingerprints, surface waviness and a dust layer (Dust slider). Labels have paper grain and a stamped ring.
+- **Photo**: thin-lens depth of field (f/11 → f/1.4), film grain and lens vignette.
+- **Rendering**: progressive accumulation. Samples alternate between a jittered key softbox and a shadow-casting sky dome, which gives soft contact-hardened shadows plus real ambient occlusion. Reflections come from a procedural photo-studio environment. While you interact the preview renders at half resolution; once you stop, it converges at full resolution in about a second.
+- **Export**: PNG at 2K/3K/4K in the selected frame ratio, optionally with a transparent background. You can also export a seamless MP4 loop (Square / 4:5 / Story, 1080p H.264, via WebCodecs). Motions: disc spin, spin + camera drift, or 360° turntable (the whole scene rotates under fixed lights). **▶ Preview loop** (or Space) plays the exact loop in real time in the video's format before you render. This needs Chrome or Edge.
+
+`vite.config.js` includes a dev-only `/__snap` endpoint that writes renders to `.snaps/` for visual QA.
