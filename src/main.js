@@ -18,9 +18,9 @@ const state = {
   finish: 'matte',
   edge: '#f2f0ec',
   bg: '#d8cec7',
-  transparent: false,
+  bgMode: 'color', // 'color' | 'transparent' | 'media'
   imgSize: 3000,
-  vid: { format: '4:5', motion: 'spin', duration: 6, turns: 1, fps: 30 },
+  vid: { motion: 'spin', duration: 6, turns: 1, fps: 30 }, // format = state.frame
   exposure: 1,
   lift: 0,
   varnish: true,
@@ -30,6 +30,7 @@ const state = {
   dust: 0.3,
 };
 let wearT;
+let bgMedia = null; // { el, w, h, name } photo or video backdrop
 
 // ---------------------------------------------------------------- scene objects
 const stage = new Stage($('c'));
@@ -84,6 +85,7 @@ const LAYOUTS = {
     cam: { az: -24, el: 10, lens: 85, zoom: 1 },
     light: { az: 320, el: 34 },
     slide: true,
+    upright: true, // 360 = turntable; flat lays flip over instead
   },
   bundle: {
     name: 'Full bundle',
@@ -108,6 +110,7 @@ const LAYOUTS = {
     items: () => [['vinyl', [0, VR + 0.3, 0], uprightDisc(0)]],
     cam: { az: -22, el: 8, lens: 85, zoom: 1 },
     light: { az: 320, el: 34 },
+    upright: true,
   },
   front: {
     name: 'Front cover',
@@ -141,7 +144,10 @@ const LAYOUTS = {
   },
 };
 
+// reframe: true = the layout's preset camera, 'fit' = keep the current angles/lens/zoom but refit the new bounds
+// (sliders that move things, so nothing slides out of shot), false = leave the camera alone
 function applyLayout({ reframe = true } = {}) {
+  stopPreview(); // a running loop animates the pivot/camera this rebuilds
   const L = LAYOUTS[state.layout];
   Object.values(objects).forEach((o) => (o.visible = false));
   for (const [key, pos, rot] of L.items(state)) {
@@ -154,12 +160,14 @@ function applyLayout({ reframe = true } = {}) {
   }
   vinyl.setSide(state.side);
   vinyl.setClip(L.slide ? sleeveClip : null);
-  stage.root.updateMatrixWorld(true);
+  // from the scene root: the pivot (stage.turn) may have moved since the last render, and a stale parent matrix
+  // would shift every measured point (-> off-centre framing while dragging a slider or switching scenes quickly)
+  stage.scene.updateMatrixWorld(true);
   const box = new THREE.Box3();
   const pts = [];
   stage.root.children.forEach((o) => {
     if (!o.visible) return;
-    box.expandByObject(o);
+    box.expandByObject(o, true); // exact: a spun record's rotated bounding box would be ~20% too big
     o.traverse((m) => {
       if (!m.isMesh) return;
       const pos = m.geometry.attributes.position;
@@ -169,7 +177,10 @@ function applyLayout({ reframe = true } = {}) {
   });
   stage.setBounds(box, pts);
   $('slideRow').style.display = L.slide ? '' : 'none';
-  if (reframe) {
+  if (reframe === 'fit') {
+    stage.frame({});
+    refreshCam();
+  } else if (reframe) {
     stage.frame({ ...L.cam });
     // upright scenes need a front key; flat lays look best back-lit (long shadows toward camera)
     const wantFront = !!L.light;
@@ -431,7 +442,7 @@ function buildLayouts() {
     const b = document.createElement('button');
     b.className = 'layout'; b.dataset.v = k;
     b.innerHTML = `${L.icon}<span>${L.name}</span>`;
-    b.onclick = () => { stopPreview(); state.layout = k; applyLayout(); refreshCam(); };
+    b.onclick = () => { state.layout = k; applyLayout(); refreshCam(); };
     wrap.appendChild(b);
   }
 }
@@ -454,16 +465,23 @@ const BGS = ['#d8cec7', '#f3f0eb', '#bdb8b1', '#c9cfc2', '#2b2a29', '#111111'];
 let refreshCam = () => {};
 let refreshLight = () => {};
 let refreshBg = () => {};
+let refreshVidDur = () => {};
 
 function buildControls() {
   // scene
-  const refreshSlide = slider('slide', () => state.slide, (v) => { state.slide = v; applyLayout({ reframe: false }); }, (v) => Math.round(v * 100) + '%');
+  const refreshSlide = slider('slide', () => state.slide, (v) => { state.slide = v; applyLayout({ reframe: 'fit' }); }, (v) => Math.round(v * 100) + '%');
   seg('side', () => state.side, (v) => { state.side = v; vinyl.setSide(v); });
   seg('finish', () => state.finish, (v) => { state.finish = v; sleeve.setFinish(v); insert.setFinish(v === 'gloss' ? 'satin' : 'matte'); });
   $('edgeColor').oninput = (e) => { state.edge = e.target.value; sleeve.setEdge(state.edge); };
   seg('varnishOn', () => (state.varnish ? 'on' : 'off'), (v) => { state.varnish = v === 'on'; sleeve.setVarnish({ on: state.varnish }); refreshVarnishUI(); });
   slider('glint', () => state.glint, (x) => { state.glint = x; refreshVarnishUI(); }, (x) => Math.round(x * 100));
-  seg('frame', () => state.frame, (v) => { state.frame = v; fitViewport(); stage.frame({}, true); });
+  seg('frame', () => state.frame, (v) => {
+    const was = !!preview;
+    stopPreview();
+    state.frame = v; fitViewport(); stage.frame({}, true);
+    updatePngHint(); refreshVidUI();
+    if (was) startPreview();
+  });
 
   // camera
   const cp = $('camPresets');
@@ -504,7 +522,7 @@ function buildControls() {
     slider('falloff', () => L.falloff, (x) => stage.setLight({ falloff: x }), (x) => Math.round(x * 100)),
     slider('bounce', () => L.bounce, (x) => stage.setLight({ bounce: x }), (x) => Math.round(x * 100)),
     slider('warmth', () => L.warmth, (x) => stage.setLight({ warmth: x }), (x) => (x > 0.5 ? '+' : '') + Math.round((x - 0.5) * 200)),
-    slider('lift', () => state.lift, (x) => { state.lift = x; stage.setLift(x); }, (x) => x.toFixed(1) + 'cm'),
+    slider('lift', () => state.lift, (x) => { state.lift = x; stage.setLift(x); applyLayout({ reframe: 'fit' }); }, (x) => x.toFixed(1) + 'cm'),
     slider('exposure', () => state.exposure, (x) => { state.exposure = x; stage.renderer.toneMappingExposure = x; }, (x) => (x > 1 ? '+' : '') + Math.round((x - 1) * 100)),
   ];
   refreshLight = () => rl.forEach((f) => f());
@@ -520,40 +538,60 @@ function buildControls() {
 
   // realism
   slider('wear', () => state.wear, (x) => { state.wear = x; clearTimeout(wearT); wearT = setTimeout(() => { sleeve.setWear(x); insert.setWear(x * 0.5); stage.invalidate(); }, 60); }, (x) => Math.round(x * 100));
-  slider('warp', () => state.warp, (x) => { state.warp = x; sleeve.setWarp(x); insert.setWarp(x * 0.4); applyLayout({ reframe: false }); }, (x) => x.toFixed(2) + 'cm');
+  slider('warp', () => state.warp, (x) => { state.warp = x; sleeve.setWarp(x); insert.setWarp(x * 0.4); applyLayout({ reframe: 'fit' }); }, (x) => x.toFixed(2) + 'cm');
   slider('dust', () => state.dust, (x) => { state.dust = x; vinyl.setDust(x); stage.invalidate(); }, (x) => Math.round(x * 100));
 
   // background
   const bgw = $('bgs');
-  const setBg = () => { stage.setBackground(state.bg, state.transparent); refreshBg(); };
+  const setMode = (m) => { state.bgMode = m; applyBg(); };
   BGS.forEach((c) => {
     const b = document.createElement('button');
     b.style.background = c; b.dataset.c = c; b.title = c;
-    b.onclick = () => { state.bg = c; state.transparent = false; setBg(); };
+    b.onclick = () => { state.bg = c; setMode('color'); };
     bgw.appendChild(b);
   });
   const tb = document.createElement('button');
   tb.className = 'transparent'; tb.title = 'Transparent'; tb.dataset.c = 'transparent';
-  tb.onclick = () => { state.transparent = true; setBg(); };
+  tb.onclick = () => setMode('transparent');
   bgw.appendChild(tb);
-  $('bgColor').oninput = (e) => { state.bg = e.target.value; state.transparent = false; setBg(); };
-  $('bgTransparent').onchange = (e) => { state.transparent = e.target.checked; setBg(); };
+  const mb = document.createElement('button');
+  mb.className = 'media'; mb.title = 'Image / video'; mb.dataset.c = 'media'; mb.hidden = true;
+  mb.onclick = () => setMode('media');
+  bgw.appendChild(mb);
+  $('bgColor').oninput = (e) => { state.bg = e.target.value; setMode('color'); };
+  $('bgTransparent').onchange = (e) => setMode(e.target.checked ? 'transparent' : 'color');
+  $('bgPick').onclick = () => { $('bgFile').value = ''; $('bgFile').click(); };
+  $('bgFile').onchange = (e) => { const f = e.target.files[0]; if (f) setBgFile(f); };
+  $('bgClear').onclick = clearBgMedia;
+  const row = $('bgMediaRow');
+  row.ondragover = (e) => { e.preventDefault(); row.classList.add('drag'); };
+  row.ondragleave = () => row.classList.remove('drag');
+  row.ondrop = (e) => { e.preventDefault(); row.classList.remove('drag'); const f = e.dataTransfer.files[0]; if (f) setBgFile(f); };
   refreshBg = () => {
-    bgw.querySelectorAll('button').forEach((b) => b.classList.toggle('on', state.transparent ? b.dataset.c === 'transparent' : b.dataset.c === state.bg));
+    bgw.querySelectorAll('button').forEach((b) => b.classList.toggle('on', state.bgMode === 'color' ? b.dataset.c === state.bg : b.dataset.c === state.bgMode));
+    mb.hidden = !bgMedia;
+    if (bgMedia) mb.style.backgroundImage = `url("${bgMedia.thumb}")`;
     $('bgColor').value = state.bg;
-    $('bgTransparent').checked = state.transparent;
+    $('bgTransparent').checked = state.bgMode === 'transparent';
+    $('bgClear').hidden = !bgMedia;
+    $('bgPick').textContent = bgMedia ? 'Replace…' : 'Choose file…';
+    const v = bgMedia?.el instanceof HTMLVideoElement ? bgMedia.el : null;
+    $('bgHint').textContent = !bgMedia
+      ? 'Drop a photo or a video here to use it as the backdrop. Shadows fall onto it.'
+      : `${bgMedia.name} · ${bgMedia.w}×${bgMedia.h}${v ? ` · ${Number.isFinite(v.duration) ? v.duration.toFixed(1) + 's ' : ''}video` : ''} · fills the frame (cropped to fit).`;
+    updatePngHint();
+    refreshVidUI();
   };
-  setBg();
+  applyBg();
 
   // export
   seg('imgSize', () => state.imgSize, (v) => { state.imgSize = +v; updatePngHint(); });
   $('exportPng').onclick = exportPng;
   // any change to the loop settings restarts a running preview so it always shows what will be exported
   const vidSet = (k, v) => { state.vid[k] = v; if (preview) { stopPreview(); startPreview(); } refreshVidUI(); };
-  seg('vidFormat', () => state.vid.format, (v) => vidSet('format', v));
   seg('vidMotion', () => state.vid.motion, (v) => vidSet('motion', v));
   seg('vidFps', () => state.vid.fps, (v) => vidSet('fps', +v));
-  slider('vidDur', () => state.vid.duration, (x) => vidSet('duration', x), (x) => x + 's');
+  refreshVidDur = slider('vidDur', () => state.vid.duration, (x) => vidSet('duration', x), (x) => +x.toFixed(1) + 's');
   slider('vidTurns', () => state.vid.turns, (x) => vidSet('turns', x), (x) => x);
   $('previewLoop').onclick = togglePreview;
   refreshVidUI();
@@ -570,12 +608,86 @@ function buildControls() {
   refreshSlide();
 }
 
+// ---------------------------------------------------------------- background image / video
+function applyBg() {
+  if (state.bgMode === 'media' && !bgMedia) state.bgMode = 'color';
+  stage.setBackground(state.bg, state.bgMode === 'transparent', state.bgMode === 'media' ? bgMedia : null);
+  // don't keep decoding a backdrop video that isn't shown
+  const v = bgMedia?.el instanceof HTMLVideoElement ? bgMedia.el : null;
+  if (v) state.bgMode === 'media' ? v.play().catch(() => {}) : v.pause();
+  refreshBg();
+}
+const VID_DUR_MAX = 15;
+function releaseBgMedia() {
+  if (!bgMedia) return;
+  if (bgMedia.el instanceof HTMLVideoElement) bgMedia.el.pause();
+  URL.revokeObjectURL(bgMedia.url);
+  bgMedia = null;
+}
+function loadVideo(url) {
+  return new Promise((res, rej) => {
+    const v = document.createElement('video');
+    Object.assign(v, { muted: true, loop: true, playsInline: true, preload: 'auto', src: url });
+    v.onloadeddata = () => res(v);
+    v.onerror = () => rej(new Error('This video format cannot be read by the browser (try MP4 / H.264 or WebM).'));
+  });
+}
+async function setBgFile(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    let el, w, h, thumb;
+    if (file.type.startsWith('video/')) {
+      el = await loadVideo(url);
+      w = el.videoWidth; h = el.videoHeight;
+      const c = document.createElement('canvas');
+      c.width = 96; c.height = Math.round((96 * h) / w);
+      c.getContext('2d').drawImage(el, 0, 0, c.width, c.height);
+      thumb = c.toDataURL();
+      // a loop exactly as long as the backdrop video makes both loop together seamlessly
+      // (not rounded to the slider step: a 6.04s clip in a 6.0s loop would jump at the seam)
+      if (Number.isFinite(el.duration) && el.duration <= 30) {
+        $('vidDur').max = Math.max(VID_DUR_MAX, Math.ceil(el.duration));
+        state.vid.duration = el.duration;
+        refreshVidDur();
+      }
+    } else {
+      el = await loadImage(url);
+      w = el.naturalWidth; h = el.naturalHeight; thumb = url;
+    }
+    releaseBgMedia();
+    bgMedia = { el, w, h, thumb, url, name: file.name };
+    state.bgMode = 'media';
+    applyBg();
+    if (preview) { stopPreview(); startPreview(); }
+  } catch (e) {
+    URL.revokeObjectURL(url);
+    alert(e.message || 'Could not load this file.');
+  }
+}
+function clearBgMedia() {
+  releaseBgMedia();
+  $('vidDur').max = VID_DUR_MAX;
+  if (state.vid.duration > VID_DUR_MAX) state.vid.duration = VID_DUR_MAX;
+  refreshVidDur();
+  applyBg();
+}
+
 // ---------------------------------------------------------------- loop preview
 // Plays exactly the motion the MP4 will contain, in real time, in the video's frame format.
 let preview = null;
+function videoDims(frame) { // 1080 on the short side, even sizes for the encoder
+  const a = aspectOf(frame);
+  return a >= 1 ? [Math.round((1080 * a) / 2) * 2, 1080] : [1080, Math.round(1080 / a / 2) * 2];
+}
+const motionOpts = () => ({ ...state.vid, flip: !LAYOUTS[state.layout].upright });
 function refreshVidUI() {
   $('vidTurnsRow').style.display = state.vid.motion === 'turntable' ? 'none' : '';
   $('motionHint').textContent = MOTIONS[state.vid.motion];
+  const [w, h] = videoDims(state.frame);
+  const alpha = state.bgMode === 'transparent';
+  $('exportMp4').textContent = alpha ? 'Render MOV (transparent)' : 'Render MP4';
+  $('vidHint').textContent = `${w} × ${h} · ${state.frame} (frame ratio at the top) · seamless loop · `
+    + (alpha ? 'ProRes 4444 with alpha: opens in QuickTime, Final Cut, Premiere, After Effects, DaVinci. Large files (~30 MB per second).' : 'H.264.');
   const on = !!preview;
   for (const id of ['play', 'previewLoop']) {
     $(id).classList.toggle('on', on);
@@ -583,18 +695,12 @@ function refreshVidUI() {
   }
   $('loopBadge').hidden = !on;
 }
-function setFrame(f) {
-  state.frame = f;
-  document.querySelectorAll('#frame button').forEach((b) => b.classList.toggle('on', b.dataset.v === f));
-  fitViewport();
-  stage.frame({}, true);
-}
 function startPreview() {
-  const prevFrame = state.frame;
-  setFrame(state.vid.format);
   stage.controls.enabled = false;
   stage.loScale = 0.75;
-  preview = { prevFrame, t0: performance.now(), base: beginMotion(stage, vinyl, state.vid.motion) };
+  preview = { t0: performance.now(), base: beginMotion(stage, vinyl, motionOpts()) };
+  const v = bgMedia?.el instanceof HTMLVideoElement && state.bgMode === 'media' ? bgMedia.el : null;
+  if (v) { v.currentTime = 0; v.play().catch(() => {}); }
   refreshVidUI();
 }
 function stopPreview() {
@@ -602,9 +708,7 @@ function stopPreview() {
   endMotion(preview.base);
   stage.controls.enabled = true;
   stage.loScale = 0.5;
-  const f = preview.prevFrame;
   preview = null;
-  setFrame(f);
   stage.invalidate();
   refreshVidUI();
 }
@@ -615,7 +719,7 @@ function tickPreview(now) {
   const t = (secs / v.duration) % 1;
   applyMotion(preview.base, t, v);
   stage.invalidate(v.motion === 'turntable'); // turntable moves the shadows, spin/sway don't
-  $('loopBadge').textContent = `${v.format} · ${(t * v.duration).toFixed(1)}s / ${v.duration}s`;
+  $('loopBadge').textContent = `${state.frame} · ${(t * v.duration).toFixed(1)}s / ${+v.duration.toFixed(2)}s`;
 }
 
 // ---------------------------------------------------------------- export
@@ -625,7 +729,7 @@ function exportDims(frame, long) {
 }
 function updatePngHint() {
   const [w, h] = exportDims(state.frame, state.imgSize);
-  $('pngHint').textContent = `${w} × ${h}px · ${state.frame} · 200-sample render${state.transparent ? ' · transparent' : ''}`;
+  $('pngHint').textContent = `${w} × ${h}px · ${state.frame} · 200-sample render${state.bgMode === 'transparent' ? ' · transparent' : ''}`;
 }
 function download(blob, name) {
   const a = document.createElement('a');
@@ -664,29 +768,28 @@ async function exportPng() {
 
 async function exportMp4() {
   stopPreview();
-  const prevFrame = state.frame;
-  const f = state.vid.format;
-  const [w, h] = f === '9:16' ? [1080, 1920] : f === '4:5' ? [1080, 1350] : [1080, 1080];
-  setFrame(f);
+  const f = state.frame;
+  const [w, h] = videoDims(f);
+  const alpha = state.bgMode === 'transparent';
+  const ext = alpha ? 'mov' : 'mp4';
   $('exportMp4').disabled = true;
   rendering = true;
-  if (state.transparent) stage.setBackground(state.bg, false); // MP4 has no alpha
   try {
     const blob = await renderLoop({
-      stage, vinyl, w, h, ...state.vid,
+      stage, vinyl, w, h, ...motionOpts(), alpha,
       onProgress: (p) => busy(true, `Rendering loop… ${Math.round(p * 100)}%`, p),
+      onStatus: (t) => busy(true, t, 1),
     });
-    window.__lastExport = { type: 'mp4', w, h, size: blob.size };
-    download(blob, `vinyl-loop-${f.replace(':', 'x')}-${stamp()}.mp4`);
+    window.__lastExport = { type: ext, w, h, size: blob.size };
+    download(blob, `vinyl-loop-${f.replace(':', 'x')}-${stamp()}.${ext}`);
   } catch (e) {
     console.error(e);
     alert('Video export failed: ' + e.message);
   } finally {
     rendering = false;
-    stage.setBackground(state.bg, state.transparent);
     busy(false);
     $('exportMp4').disabled = false;
-    if (prevFrame !== f) setFrame(prevFrame);
+    stage.invalidate();
   }
 }
 
