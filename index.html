@@ -144,6 +144,12 @@
           <input type="color" id="bgColor" />
           <label class="check"><input type="checkbox" id="bgTransparent" /> Transparent</label>
         </div>
+        <div class="row" id="bgMediaRow">
+          <label>Image / video</label>
+          <button class="ghost" id="bgPick">Choose file…</button>
+          <button class="ghost" id="bgClear" title="Remove the background image / video" hidden>×</button>
+        </div>
+        <p class="hint" id="bgHint">Drop a photo or a video here to use it as the backdrop. Shadows fall onto it.</p>
       </section>
 
       <section>
@@ -161,19 +167,13 @@
       <section>
         <h2>Export loop video</h2>
         <div class="row">
-          <label>Format</label>
-          <div class="seg" id="vidFormat">
-            <button data-v="1:1">Square</button><button data-v="4:5">4:5</button><button data-v="9:16">Story</button>
-          </div>
-        </div>
-        <div class="row">
           <label>Motion</label>
           <div class="seg" id="vidMotion">
             <button data-v="spin">Spin</button><button data-v="sway">Spin + drift</button><button data-v="turntable">360°</button>
           </div>
         </div>
         <p class="hint" id="motionHint"></p>
-        <div class="row"><label>Duration</label><input type="range" id="vidDur" min="2" max="15" step="1" /><output id="vidDurOut"></output></div>
+        <div class="row"><label>Duration</label><input type="range" id="vidDur" min="2" max="15" step="0.1" /><output id="vidDurOut"></output></div>
         <div class="row" id="vidTurnsRow"><label>Turns / loop</label><input type="range" id="vidTurns" min="1" max="6" step="1" /><output id="vidTurnsOut"></output></div>
         <div class="row">
           <label>Frame rate</label>
@@ -181,11 +181,12 @@
         </div>
         <button class="ghost wide" id="previewLoop">▶ Preview loop</button>
         <button class="primary" id="exportMp4">Render MP4</button>
-        <p class="hint">Seamless loop · 1080p · H.264. The preview plays the exact motion in the video's format.</p>
+        <p class="hint" id="vidHint"></p>
       </section>
     </aside>
   </div>
   <input type="file" id="filePick" accept="image/*" hidden />
+  <input type="file" id="bgFile" accept="image/*,video/*" hidden />
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
