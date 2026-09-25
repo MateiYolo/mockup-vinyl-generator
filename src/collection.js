@@ -52,17 +52,31 @@ export async function exportBackup(projects) {
   return new Blob([JSON.stringify({ app: 'vinyl-mockup-studio', version: 1, projects: out })], { type: 'application/json' });
 }
 
+// only embedded images: a backup must never make the app fetch a URL or inject one into the page
+const isImageData = (u) => typeof u === 'string' && u.startsWith('data:image/');
+const isObject = (o) => !!o && typeof o === 'object' && !Array.isArray(o);
+const validProject = (p) => isObject(p) && typeof p.id === 'string' && !!p.id && typeof p.name === 'string'
+  && isObject(p.settings) && (p.images === undefined || (isObject(p.images) && Object.values(p.images).every(isImageData)));
+
+// every entry is checked and decoded first, then all are written in one transaction: all or nothing
 export async function importBackup(file) {
   let data;
   try { data = JSON.parse(await file.text()); } catch { throw new Error('This file is not a vinyl collection backup.'); }
   if (data?.app !== 'vinyl-mockup-studio' || !Array.isArray(data.projects)) throw new Error('This file is not a vinyl collection backup.');
-  const existing = new Set((await listProjects()).map((p) => p.id));
-  let added = 0, updated = 0;
-  for (const p of data.projects) {
+  const valid = data.projects.filter(validProject);
+  const ready = [];
+  for (const p of valid) {
     const images = {};
     for (const [k, url] of Object.entries(p.images || {})) images[k] = await (await fetch(url)).blob();
-    existing.has(p.id) ? updated++ : added++;
-    await putProject({ ...p, images });
+    const now = Date.now();
+    ready.push({
+      id: p.id, name: p.name, settings: p.settings, images,
+      created: Number(p.created) || now, updated: Number(p.updated) || now,
+      thumb: isImageData(p.thumb) ? p.thumb : '',
+    });
   }
-  return { added, updated };
+  const existing = new Set((await listProjects()).map((p) => p.id));
+  await tx('readwrite', (s) => { ready.forEach((p) => s.put(p)); });
+  const updated = ready.filter((p) => existing.has(p.id)).length;
+  return { added: ready.length - updated, updated, skipped: data.projects.length - ready.length, ids: ready.map((p) => p.id) };
 }
