@@ -250,9 +250,11 @@ function applySlot(key) {
     case 'insertVerso': insert.setArt('back', img); break;
     case 'labelA':
     case 'labelB':
+      vinyl.labelA.material.map?.dispose(); vinyl.labelB.material.map?.dispose();
       vinyl.setLabels(images.labelA && tex(images.labelA), images.labelB && tex(images.labelB));
       break;
     case 'vinylArt':
+      vinylArtTex?.dispose();
       vinylArtTex = discTextureFromImage(img);
       if (state.vinyl === 'artwork') applyVinyl();
       break;
@@ -284,8 +286,14 @@ function buildSlots() {
     wrap.appendChild(b);
   }
 }
+// swaps the image behind a slot, releasing the blob: URL of the one it replaces
+function setImage(k, img) {
+  const old = images[k]?.src;
+  if (old?.startsWith('blob:') && old !== img?.src) URL.revokeObjectURL(old);
+  if (img) images[k] = img; else delete images[k];
+}
 function clearSlot(k) {
-  delete images[k];
+  setImage(k, null);
   const side = k === 'varnishFront' ? 'front' : 'back';
   sleeve.setVarnishMask(side, null);
   document.querySelector(`.slot[data-k="${k}"] .thumb`).style.backgroundImage = '';
@@ -303,7 +311,7 @@ let pickKey = null;
 function pickFile(k) { pickKey = k; $('filePick').value = ''; $('filePick').click(); }
 $('filePick').onchange = (e) => { const f = e.target.files[0]; if (f && pickKey) setSlotFile(pickKey, f); };
 async function setSlotFile(k, file) {
-  images[k] = await loadImage(URL.createObjectURL(file));
+  setImage(k, await loadImage(URL.createObjectURL(file)));
   applySlot(k);
   refreshDirty();
 }
@@ -409,7 +417,7 @@ function renderVinylOpts() {
 }
 
 // ---------------------------------------------------------------- generic UI helpers
-const refreshers = []; // every seg/slider, re-synced from state when a saved vinyl is opened
+const refreshers = []; // every seg/slider (studio ones included), re-synced from state when a saved vinyl is opened
 function seg(id, get, set) {
   const el = $(id);
   const refresh = () => el.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === String(get())));
@@ -711,14 +719,17 @@ function applySettings(s) {
   applyLayout({ reframe: 'fit' }); // warp changes the stack height
 }
 
-// fills every slot; a missing entry empties a varnish slot or falls back to the default artwork
+// fills every slot; a missing or unreadable entry empties a varnish slot or falls back to the default artwork
+// (never keeps the previous vinyl's image)
 async function applyImages(blobs) {
+  const load = async (src) => { try { return await loadImage(src); } catch { if (src.startsWith('blob:')) URL.revokeObjectURL(src); return null; } };
   const loaded = await Promise.all(Object.entries(SLOTS).map(async ([k, s]) => {
-    const src = blobs?.[k] ? URL.createObjectURL(blobs[k]) : s.varnish && blobs ? null : s.url;
-    try { return [k, src && (await loadImage(src))]; } catch { return [k, null]; }
+    let img = blobs?.[k] ? await load(URL.createObjectURL(blobs[k])) : null;
+    if (!img && !(s.varnish && blobs)) img = await load(s.url);
+    return [k, img];
   }));
   for (const [k, img] of loaded) {
-    if (img) { images[k] = img; applySlot(k); } else if (SLOTS[k].varnish) clearSlot(k);
+    if (img) { setImage(k, img); applySlot(k); } else if (SLOTS[k].varnish) clearSlot(k);
   }
 }
 
@@ -741,15 +752,19 @@ async function saveProject() {
   saving = true;
   const name = $('projName').value.trim() || 'Untitled vinyl';
   $('projSave').disabled = true;
+  // captured up front: edits made while the images are being read must stay "unsaved"
+  const settings = settingsOf(), snap = snapshot(), thumb = coverThumb();
+  const srcs = Object.keys(SLOTS).filter((k) => images[k]).map((k) => [k, images[k].src]);
   try {
     const blobs = {};
-    await Promise.all(Object.keys(SLOTS).map(async (k) => { if (images[k]) blobs[k] = await (await fetch(images[k].src)).blob(); }));
+    await Promise.all(srcs.map(async ([k, src]) => { blobs[k] = await (await fetch(src)).blob(); }));
     const prev = project.id && (await getProject(project.id));
     const now = Date.now();
     project = { id: project.id || newId(), name };
-    await putProject({ ...project, created: prev?.created || now, updated: now, thumb: coverThumb(), settings: settingsOf(), images: blobs });
+    await putProject({ ...project, created: prev?.created || now, updated: now, thumb, settings, images: blobs });
     $('projName').value = name;
-    markSaved();
+    savedSnap = snap;
+    refreshDirty();
     flashHint(`Saved “${name}”.`);
   } catch (e) {
     console.error(e);
@@ -773,6 +788,9 @@ async function openProject(id) {
     project = { id: p.id, name: p.name };
     $('projName').value = p.name;
     markSaved();
+  } catch (e) {
+    console.error(e);
+    alert(`Could not open “${p.name}”: ${e.message}`);
   } finally {
     busy(false);
     renderProjects();
@@ -843,8 +861,11 @@ function buildCollection() {
     if (!f) return;
     busy(true, 'Importing…', 0.5);
     try {
-      const { added, updated } = await importBackup(f);
-      flashHint(`Imported ${added} new vinyl${added === 1 ? '' : 's'}${updated ? `, updated ${updated}` : ''}.`);
+      const { added, updated, skipped, ids } = await importBackup(f);
+      // the vinyl on screen was overwritten in the collection: it no longer matches what's stored
+      if (project.id && ids.includes(project.id)) { savedSnap = ''; refreshDirty(); }
+      flashHint(`Imported ${added} new vinyl${added === 1 ? '' : 's'}${updated ? `, updated ${updated}` : ''}`
+        + `${skipped ? ` (${skipped} unreadable skipped)` : ''}.`);
     } catch (err) {
       alert(err.message);
     } finally {
@@ -853,7 +874,7 @@ function buildCollection() {
     }
   };
   // ⌘S / Ctrl+S saves the current vinyl
-  window.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); saveProject(); } });
+  window.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveProject(); } });
   // only guards a vinyl from the collection: tweaking the default one without ever saving shouldn't nag on reload
   window.addEventListener('beforeunload', (e) => { if (project.id && savedSnap !== snapshot()) e.preventDefault(); });
 }
