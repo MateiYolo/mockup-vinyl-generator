@@ -648,6 +648,11 @@ function buildControls() {
   $('exportMp4').onclick = exportMp4;
 
   $('play').onclick = togglePreview;
+  // small screens show one panel at a time under the preview
+  const tabs = $('tabs').querySelectorAll('button');
+  const setTab = (v) => { $('app').dataset.tab = v; tabs.forEach((b) => b.classList.toggle('on', b.dataset.v === v)); };
+  tabs.forEach((b) => (b.onclick = () => { setTab(b.dataset.v); $('app').querySelector(b.dataset.v === 'design' ? '.panel.left' : '.panel.right').scrollTop = 0; }));
+  setTab($('app').dataset.tab);
   $('reframe').onclick = () => { stage.frame({}, false); refreshCam(); };
   window.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT') return;
@@ -931,10 +936,11 @@ function refreshVidUI() {
   $('vidHint').textContent = `${w} × ${h} · ${state.frame} (frame ratio at the top) · seamless loop · `
     + (alpha ? 'ProRes 4444 with alpha: opens in QuickTime, Final Cut, Premiere, After Effects, DaVinci. Large files (~30 MB per second).' : 'H.264.');
   const on = !!preview;
-  for (const id of ['play', 'previewLoop']) {
-    $(id).classList.toggle('on', on);
-    $(id).textContent = on ? '■ Stop preview' : '▶ Preview loop';
-  }
+  for (const id of ['play', 'previewLoop']) $(id).classList.toggle('on', on);
+  $('previewLoop').textContent = on ? '■ Stop preview' : '▶ Preview loop';
+  // the topbar button collapses to its icon on small screens
+  $('play').innerHTML = on ? '■<span class="lbl"> Stop preview</span>' : '▶<span class="lbl"> Preview loop</span>';
+  $('play').ariaLabel = on ? 'Stop preview' : 'Preview loop';
   $('loopBadge').hidden = !on;
 }
 function startPreview() {
