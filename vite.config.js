@@ -18,4 +18,9 @@ const snap = {
   },
 };
 
-export default defineConfig({ plugins: [snap], server: { port: 5178 } });
+export default defineConfig({
+  plugins: [snap],
+  server: { port: 5178 },
+  // ffmpeg.wasm spawns its own worker: it must not be pre-bundled
+  optimizeDeps: { exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'] },
+});

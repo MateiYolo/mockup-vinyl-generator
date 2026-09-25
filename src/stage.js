@@ -168,6 +168,7 @@ export class Stage {
     this.envRT = this.pmrem.fromScene(studioEnvironment(), 0.02);
     scene.environment = this.envRT.texture;
     this.glint = 0; // "varnish reflector" strength
+    this.skyShadow = 1; // scales the sky-dome (ambient) floor shadow, faded while a layout floats
     this.glintKey = '';
     scene.environmentIntensity = 0.35;
 
@@ -231,13 +232,20 @@ export class Stage {
     this.blendQuad = quad(`uniform sampler2D prev, cur; uniform float w; varying vec2 vUv;
       void main(){ gl_FragColor = mix(texture2D(prev, vUv), texture2D(cur, vUv), w); }`,
     { prev: { value: null }, cur: { value: null }, w: { value: 1 } });
-    this.presentQuad = quad(`uniform sampler2D tDiffuse; uniform float grain, vignette, seed; uniform vec2 res; varying vec2 vUv;
+    this.presentQuad = quad(`uniform sampler2D tDiffuse, bgMap; uniform float grain, vignette, seed, bgOn; uniform vec2 res, bgSize; varying vec2 vUv;
       float hash(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031 + seed * .0137); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
       void main(){
         vec4 c = texture2D(tDiffuse, vUv);
         gl_FragColor = c;
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
+        // photo / video backdrop, fitted like CSS "cover", composited under the (premultiplied) render in display space
+        if (bgOn > 0.5) {
+          float sa = res.x / res.y, ma = bgSize.x / bgSize.y;
+          vec2 s = sa > ma ? vec2(1.0, ma / sa) : vec2(sa / ma, 1.0);
+          vec3 bg = texture2D(bgMap, (vUv - 0.5) * s + 0.5).rgb;
+          gl_FragColor = vec4(gl_FragColor.rgb + bg * (1.0 - gl_FragColor.a), 1.0);
+        }
         // lens falloff
         vec2 d = vUv - 0.5; d.x *= res.x / res.y;
         gl_FragColor.rgb *= 1.0 - vignette * smoothstep(0.35, 1.0, length(d));
@@ -246,7 +254,10 @@ export class Stage {
         float nz = hash(gp) + hash(gp + 71.3) - 1.0;
         float lum = dot(gl_FragColor.rgb, vec3(0.299, 0.587, 0.114));
         gl_FragColor.rgb += nz * grain * 0.055 * (0.3 + 0.7 * (1.0 - abs(lum * 2.0 - 1.0))) * gl_FragColor.a;
-      }`, { tDiffuse: { value: null }, grain: { value: 0 }, vignette: { value: 0 }, seed: { value: 0 }, res: { value: new THREE.Vector2(1, 1) } });
+      }`, {
+      tDiffuse: { value: null }, grain: { value: 0 }, vignette: { value: 0 }, seed: { value: 0 }, res: { value: new THREE.Vector2(1, 1) },
+      bgMap: { value: null }, bgOn: { value: 0 }, bgSize: { value: new THREE.Vector2(1, 1) },
+    });
     this.presentQuad.material.toneMapped = true;
     this.quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   }
@@ -298,7 +309,10 @@ export class Stage {
         const y0 = Math.sin(18 * DEG), y = y0 + halton(j, 2) * (1 - y0), ph = halton(j, 3) * Math.PI * 2, k = Math.sqrt(1 - y * y);
         d.set(Math.cos(ph) * k, y, Math.sin(ph) * k);
         this.key.intensity = 2 * L.sky;
-        this.floor.material.opacity = Math.min(1, 2 * L.ambient * this.shadowMul());
+        // a floating object's sky shadow is too diffuse to resolve with a few dozen samples (it shows as stepped
+        // ghost copies): fade it with the height instead
+        const fade = this.skyShadow / (1 + (this.lift || 0) / 3);
+        this.floor.material.opacity = Math.min(1, 2 * L.ambient * this.shadowMul() * fade);
       }
       let jx = halton(n, 5) - 0.5, jy = halton(n, 7) - 0.5;
       // thin-lens depth of field: move the eye on the aperture, re-aim the frustum at the focus plane
@@ -353,15 +367,51 @@ export class Stage {
     u.vignette.value = this.transparentBg ? 0 : P.vignette;
     u.seed.value = P.seed;
     u.res.value.set(this.acc.w, this.acc.h);
+    const m = this.bgMedia;
+    u.bgOn.value = m ? 1 : 0;
+    if (m) {
+      if (m.video && m.video.readyState >= 2) m.tex.needsUpdate = true;
+      u.bgMap.value = m.tex;
+      u.bgSize.value.set(m.w, m.h);
+    }
     this.renderer.setRenderTarget(null);
     this.renderer.render(this.presentQuad, this.quadCam);
   }
 
-  setBackground(color, transparent) {
-    this.transparentBg = transparent;
-    this.scene.background = transparent ? null : new THREE.Color(color);
+  // media: { el: HTMLImageElement | HTMLVideoElement, w, h } drawn behind the scene; the floor shadows land on it
+  setBackground(color, transparent, media = null) {
+    this.transparentBg = transparent && !media;
+    this.scene.background = transparent || media ? null : new THREE.Color(color);
     this.bgColor = color;
+    if (this.bgMedia && this.bgMedia.el !== media?.el) this.bgMedia.tex.dispose();
+    if (media && this.bgMedia?.el !== media.el) {
+      const isVideo = media.el instanceof HTMLVideoElement;
+      const tex = isVideo ? new THREE.VideoTexture(media.el) : new THREE.Texture(media.el);
+      tex.colorSpace = THREE.NoColorSpace; // sampled as-is: composited after the output transform
+      tex.minFilter = THREE.LinearFilter;
+      tex.generateMipmaps = false;
+      tex.needsUpdate = true;
+      this.bgMedia = { ...media, tex, video: isVideo ? media.el : null };
+    } else if (!media) this.bgMedia = null;
     this.invalidate();
+  }
+
+  // video backdrop: show frame at time t (seconds), used by the deterministic video export
+  seekBackground(t) {
+    const v = this.bgMedia?.video;
+    if (!v || !v.duration) return Promise.resolve();
+    v.pause();
+    const time = t % v.duration;
+    if (Math.abs(v.currentTime - time) < 1e-3) return Promise.resolve();
+    return new Promise((res, rej) => {
+      // never hang the export on a seek that doesn't complete
+      const done = (err) => { clearTimeout(timer); v.removeEventListener('seeked', ok); v.removeEventListener('error', ko); err ? rej(err) : res(); };
+      const ok = () => done(), ko = () => done(new Error('The background video could not be read.'));
+      const timer = setTimeout(() => done(new Error('The background video stopped responding while seeking.')), 5000);
+      v.addEventListener('seeked', ok);
+      v.addEventListener('error', ko);
+      v.currentTime = time;
+    });
   }
 
   setLight(opts) {
@@ -448,21 +498,41 @@ export class Stage {
     this.invalidate();
   }
 
-  // Frame so the layout stays in shot for a full turntable revolution. Returns a restore function.
-  frameForTurntable() {
-    const saved = this.fitPoints;
-    const c = this.turn.position;
-    const pts = [];
-    for (let k = 0; k < 16; k++) {
-      const a = (k / 16) * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a);
-      for (const p of saved) {
-        const x = p.x - c.x, z = p.z - c.z;
-        pts.push(new THREE.Vector3(c.x + x * ca + z * sa, p.y, c.z - x * sa + z * ca));
-      }
+  // Frame (and size the shadow frustum) so the layout stays in shot for a whole motion.
+  // pose(t) moves this.turn for t in [0, 1). Returns a function restoring the previous camera and bounds.
+  frameForMotion(pose, steps = 24) {
+    const cam = this.camera, turn = this.turn;
+    const saved = {
+      pts: this.fitPoints, box: this.box.clone(), pos: cam.position.clone(), target: this.controls.target.clone(),
+      near: cam.near, far: cam.far, baseDist: this.baseDist, turnPos: turn.position.clone(), turnQ: turn.quaternion.clone(),
+    };
+    turn.updateMatrixWorld(true);
+    const inv = turn.matrixWorld.clone().invert();
+    const local = saved.pts.filter((_, i) => i % 3 === 0).map((p) => p.clone().applyMatrix4(inv));
+    const pts = [], box = this.box.clone();
+    for (let k = 0; k < steps; k++) {
+      pose(k / steps);
+      turn.updateMatrixWorld(true);
+      for (const p of local) { const q = p.clone().applyMatrix4(turn.matrixWorld); pts.push(q); box.expandByPoint(q); }
     }
-    this.fitPoints = pts.filter((_, i) => i % 3 === 0);
+    turn.position.copy(saved.turnPos);
+    turn.quaternion.copy(saved.turnQ);
+    this.fitPoints = pts;
+    this.box.copy(box);
+    this.setLight({});
     this.frame();
-    return () => { this.fitPoints = saved; this.frame(); };
+    return () => {
+      this.fitPoints = saved.pts;
+      this.box.copy(saved.box);
+      this.setLight({});
+      Object.assign(cam, { near: saved.near, far: saved.far });
+      cam.updateProjectionMatrix();
+      cam.position.copy(saved.pos);
+      this.controls.target.copy(saved.target);
+      this.baseDist = saved.baseDist;
+      cam.lookAt(saved.target);
+      this.controls.update();
+    };
   }
 
   // Place the camera from spherical angles and auto-fit the bounds.
@@ -481,7 +551,7 @@ export class Stage {
     const camUp = new THREE.Vector3().crossVectors(dir, right).normalize();
     const tanV = Math.tan((cam.fov * DEG) / 2);
     const tanH = tanV * cam.aspect;
-    const m = v.zoom / 1.12;
+    const m = v.zoom / 1.18; // breathing room around the layout at zoom 1
     const pts = this.fitPoints?.length ? this.fitPoints : boxCorners(this.box);
     const p = new THREE.Vector3();
     let d = 0;
@@ -533,7 +603,10 @@ export class Stage {
       this.ensureTargets(size.x, size.y, 0);
       if (this.acc.n === 0) this.updateGlint();
     }
-    if (this.acc.n >= this.acc.max) return;
+    if (this.acc.n >= this.acc.max) {
+      if (this.bgMedia?.video) this.present(); // converged, but the backdrop keeps playing
+      return;
+    }
     this.beforeRender && this.beforeRender();
     const t0 = performance.now();
     do { this.accumulate(); } while (this.acc.n < this.acc.max && performance.now() - t0 < budgetMs && this.acc.n > 1);
