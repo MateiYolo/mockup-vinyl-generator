@@ -133,3 +133,23 @@ details.adv[open] summary::before { content: '▾ '; }
 .bgs .media { background-size: cover; background-position: center; }
 .bgs button[hidden] { display: none; }
 #bgMediaRow.drag { outline: 1px dashed var(--accent); outline-offset: 4px; border-radius: 6px; }
+
+.proj-name { position: relative; }
+.proj-name input { width: 100%; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 26px 8px 10px; color: var(--text); font: inherit; font-size: 13px; }
+.proj-name input:focus { outline: none; border-color: var(--accent); }
+.proj-name .dirty { position: absolute; right: 10px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; background: var(--accent); }
+.proj-name .dirty[hidden] { display: none; }
+.proj-actions { display: grid; grid-template-columns: 1fr auto; gap: 6px; margin-top: 8px; }
+.proj-actions .primary { margin: 0; padding: 8px; }
+.projects { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; max-height: 260px; overflow-y: auto; scrollbar-width: thin; }
+.projects:empty { display: none; }
+.project { position: relative; display: grid; grid-template-columns: 36px 1fr; gap: 10px; align-items: center; text-align: left; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 5px 28px 5px 5px; }
+.project:hover { border-color: #3a3a40; }
+.project.on { border-color: var(--accent); background: #221a17; }
+.project i { width: 36px; height: 36px; border-radius: 4px; background: #222 center/cover no-repeat; }
+.project b { display: block; font-weight: 500; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.project small { display: block; color: var(--muted); font-size: 10.5px; margin-top: 2px; }
+.project .del { position: absolute; right: 6px; top: 50%; margin-top: -10px; width: 20px; height: 20px; border-radius: 50%; border: 0; background: none; color: var(--muted); font-size: 14px; line-height: 20px; padding: 0; display: none; }
+.project:hover .del { display: block; }
+.project .del:hover { color: #fff; background: #333; }
+.proj-backup { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }

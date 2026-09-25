@@ -3,6 +3,7 @@ import { Stage } from './stage.js';
 import { Vinyl, Sleeve, Insert, SLEEVE, INSERT, VINYL } from './objects.js';
 import { makeGrooveMaps, makeMarble, makeSplatter, makeSplit, discTextureFromImage, borderColor } from './textures.js';
 import { renderLoop, beginMotion, applyMotion, endMotion, MOTIONS } from './video.js';
+import { listProjects, getProject, putProject, deleteProject, newId, exportBackup, importBackup } from './collection.js';
 
 const $ = (id) => document.getElementById(id);
 const PI = Math.PI;
@@ -290,6 +291,7 @@ function clearSlot(k) {
   document.querySelector(`.slot[data-k="${k}"] .thumb`).style.backgroundImage = '';
   refreshVarnishUI();
   stage.invalidate();
+  refreshDirty();
 }
 function refreshVarnishUI() {
   const has = !!(images.varnishFront || images.varnishBack);
@@ -303,6 +305,7 @@ $('filePick').onchange = (e) => { const f = e.target.files[0]; if (f && pickKey)
 async function setSlotFile(k, file) {
   images[k] = await loadImage(URL.createObjectURL(file));
   applySlot(k);
+  refreshDirty();
 }
 
 // ---------------------------------------------------------------- vinyl finishes
@@ -406,11 +409,13 @@ function renderVinylOpts() {
 }
 
 // ---------------------------------------------------------------- generic UI helpers
+const refreshers = []; // every seg/slider, re-synced from state when a saved vinyl is opened
 function seg(id, get, set) {
   const el = $(id);
   const refresh = () => el.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === String(get())));
   el.querySelectorAll('button').forEach((b) => (b.onclick = () => { set(b.dataset.v); refresh(); }));
   refresh();
+  refreshers.push(refresh);
   return refresh;
 }
 function slider(id, get, set, fmt = (v) => v) {
@@ -418,6 +423,7 @@ function slider(id, get, set, fmt = (v) => v) {
   const refresh = () => { el.value = get(); if (out) out.textContent = fmt(+el.value); };
   el.oninput = () => { set(+el.value); if (out) out.textContent = fmt(+el.value); };
   refresh();
+  refreshers.push(refresh);
   return refresh;
 }
 
@@ -653,6 +659,178 @@ function clearBgMedia() {
   applyBg();
 }
 
+// ---------------------------------------------------------------- collection (saved vinyls)
+// A project is one release: the artwork slots + the vinyl & sleeve settings. The studio (scene, camera, light,
+// background, export) is left alone when switching, so the whole collection can be shot the same way.
+const PROJECT_KEYS = ['vinyl', 'vinylColors', 'finish', 'edge', 'varnish', 'glint', 'wear', 'warp', 'dust'];
+let DEFAULTS; // settings at boot, for "+ New"
+let project = { id: null, name: '' };
+let savedSnap = '';
+
+const settingsOf = () => structuredClone({ ...Object.fromEntries(PROJECT_KEYS.map((k) => [k, state[k]])), seeds, splitAngle });
+// cheap change detector: settings + the image behind each slot (a replaced file gets a new blob: URL)
+const snapshot = () => JSON.stringify([settingsOf(), Object.keys(SLOTS).map((k) => images[k]?.src || '')]);
+
+function applySettings(s) {
+  for (const k of PROJECT_KEYS) if (s[k] !== undefined) state[k] = structuredClone(s[k]);
+  Object.assign(seeds, s.seeds);
+  if (s.splitAngle !== undefined) splitAngle = s.splitAngle;
+  sleeve.setFinish(state.finish);
+  insert.setFinish(state.finish === 'gloss' ? 'satin' : 'matte');
+  sleeve.setEdge(state.edge);
+  $('edgeColor').value = state.edge;
+  sleeve.setVarnish({ on: state.varnish });
+  sleeve.setWear(state.wear); insert.setWear(state.wear * 0.5);
+  sleeve.setWarp(state.warp); insert.setWarp(state.warp * 0.4);
+  vinyl.setDust(state.dust);
+  refreshVarnishUI();
+  applyVinyl(); renderSwatches(); renderVinylOpts();
+  refreshers.forEach((f) => f());
+  applyLayout({ reframe: 'fit' }); // warp changes the stack height
+}
+
+// fills every slot; a missing entry empties a varnish slot or falls back to the default artwork
+async function applyImages(blobs) {
+  const loaded = await Promise.all(Object.entries(SLOTS).map(async ([k, s]) => {
+    const src = blobs?.[k] ? URL.createObjectURL(blobs[k]) : s.varnish && blobs ? null : s.url;
+    try { return [k, src && (await loadImage(src))]; } catch { return [k, null]; }
+  }));
+  for (const [k, img] of loaded) {
+    if (img) { images[k] = img; applySlot(k); } else if (SLOTS[k].varnish) clearSlot(k);
+  }
+}
+
+function coverThumb() {
+  const img = images.coverFront;
+  if (!img) return '';
+  const c = document.createElement('canvas');
+  c.width = c.height = 96;
+  c.getContext('2d').drawImage(img, 0, 0, 96, 96);
+  return c.toDataURL('image/jpeg', 0.8);
+}
+const confirmDiscard = () => savedSnap === snapshot()
+  || confirm(`“${project.name || 'Untitled vinyl'}” has unsaved changes that will be lost. Continue?`);
+function refreshDirty() { $('projDirty').hidden = savedSnap === snapshot(); }
+function markSaved() { savedSnap = snapshot(); refreshDirty(); }
+
+async function saveProject() {
+  const name = $('projName').value.trim() || 'Untitled vinyl';
+  $('projSave').disabled = true;
+  try {
+    const blobs = {};
+    await Promise.all(Object.keys(SLOTS).map(async (k) => { if (images[k]) blobs[k] = await (await fetch(images[k].src)).blob(); }));
+    const prev = project.id && (await getProject(project.id));
+    const now = Date.now();
+    project = { id: project.id || newId(), name };
+    await putProject({ ...project, created: prev?.created || now, updated: now, thumb: coverThumb(), settings: settingsOf(), images: blobs });
+    $('projName').value = name;
+    markSaved();
+    flashHint(`Saved “${name}”.`);
+  } catch (e) {
+    console.error(e);
+    alert('Could not save: ' + e.message);
+  } finally {
+    $('projSave').disabled = false;
+    renderProjects();
+  }
+}
+
+async function openProject(id) {
+  if (id === project.id || !confirmDiscard()) return;
+  const p = await getProject(id);
+  if (!p) return renderProjects();
+  busy(true, `Opening “${p.name}”…`, 0.5);
+  try {
+    stopPreview();
+    await applyImages(p.images);
+    applySettings(p.settings);
+    project = { id: p.id, name: p.name };
+    $('projName').value = p.name;
+    markSaved();
+  } finally {
+    busy(false);
+    renderProjects();
+  }
+}
+
+async function newProject() {
+  if (!confirmDiscard()) return;
+  busy(true, 'New vinyl…', 0.5);
+  try {
+    stopPreview();
+    await applyImages(null);
+    applySettings(DEFAULTS);
+    project = { id: null, name: '' };
+    $('projName').value = '';
+    markSaved();
+  } finally {
+    busy(false);
+    renderProjects();
+  }
+  $('projName').focus();
+}
+
+async function removeProject(p) {
+  if (!confirm(`Delete “${p.name}” from the collection? This cannot be undone.`)) return;
+  await deleteProject(p.id);
+  if (p.id === project.id) { project.id = null; savedSnap = ''; refreshDirty(); } // what's on screen is now unsaved
+  renderProjects();
+}
+
+async function renderProjects() {
+  const wrap = $('projects');
+  const list = await listProjects();
+  wrap.innerHTML = '';
+  for (const p of list) {
+    const b = document.createElement('div');
+    b.className = 'project' + (p.id === project.id ? ' on' : '');
+    b.role = 'button';
+    b.innerHTML = `<i></i><div><b></b><small>${new Date(p.updated).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}</small></div><button class="del" title="Delete">×</button>`;
+    b.querySelector('b').textContent = p.name;
+    if (p.thumb) b.querySelector('i').style.backgroundImage = `url("${p.thumb}")`;
+    b.onclick = () => openProject(p.id);
+    b.querySelector('.del').onclick = (e) => { e.stopPropagation(); removeProject(p); };
+    wrap.appendChild(b);
+  }
+  $('projExport').disabled = !list.length;
+}
+
+let hintT;
+function flashHint(text) {
+  const el = $('projHint'), def = el.dataset.def ??= el.textContent;
+  el.textContent = text;
+  clearTimeout(hintT);
+  hintT = setTimeout(() => (el.textContent = def), 3500);
+}
+
+function buildCollection() {
+  $('projSave').onclick = saveProject;
+  $('projNew').onclick = newProject;
+  $('projName').onkeydown = (e) => { if (e.key === 'Enter') saveProject(); };
+  $('projExport').onclick = async () => {
+    busy(true, 'Packing the collection…', 0.5);
+    try { download(await exportBackup(await listProjects()), `vinyl-collection-${stamp()}.json`); } finally { busy(false); }
+  };
+  $('projImport').onclick = () => { $('backupFile').value = ''; $('backupFile').click(); };
+  $('backupFile').onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    busy(true, 'Importing…', 0.5);
+    try {
+      const { added, updated } = await importBackup(f);
+      flashHint(`Imported ${added} new vinyl${added === 1 ? '' : 's'}${updated ? `, updated ${updated}` : ''}.`);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      busy(false);
+      renderProjects();
+    }
+  };
+  // ⌘S / Ctrl+S saves the current vinyl
+  window.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); saveProject(); } });
+  window.addEventListener('beforeunload', (e) => { if (DEFAULTS && savedSnap !== snapshot()) e.preventDefault(); });
+}
+
 // ---------------------------------------------------------------- loop preview
 // Plays exactly the motion the MP4 will contain, in real time, in the video's frame format.
 let preview = null;
@@ -789,13 +967,14 @@ function tick(now) {
 }
 
 // any UI interaction may change the scene -> restart progressive accumulation
-['input', 'change', 'click', 'drop'].forEach((ev) => window.addEventListener(ev, () => setTimeout(() => stage.invalidate()), true));
+['input', 'change', 'click', 'drop'].forEach((ev) => window.addEventListener(ev, () => setTimeout(() => { stage.invalidate(); if (DEFAULTS) refreshDirty(); }), true));
 
 // ---------------------------------------------------------------- boot
 (async function boot() {
   buildLayouts();
   buildSlots();
   buildControls();
+  buildCollection();
   renderSwatches();
   renderVinylOpts();
   await Promise.all(Object.entries(SLOTS).map(async ([k, s]) => {
@@ -813,6 +992,9 @@ function tick(now) {
   applyLayout();
   refreshCam();
   refreshLight();
+  DEFAULTS = settingsOf();
+  markSaved();
+  renderProjects();
   requestAnimationFrame(tick);
   window.__app = { state, stage, vinyl, applyLayout, LAYOUTS, exportPng, exportMp4 };
 })();
