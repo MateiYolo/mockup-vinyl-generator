@@ -18,6 +18,24 @@
       </header>
 
       <section>
+        <h2>Collection</h2>
+        <div class="proj-name">
+          <input type="text" id="projName" placeholder="Untitled vinyl" spellcheck="false" />
+          <span class="dirty" id="projDirty" title="Unsaved changes" hidden></span>
+        </div>
+        <div class="proj-actions">
+          <button class="primary" id="projSave">Save</button>
+          <button class="ghost" id="projNew" title="Start a new vinyl (the saved ones stay in the collection)">+ New</button>
+        </div>
+        <div class="projects" id="projects"></div>
+        <div class="proj-backup">
+          <button class="ghost" id="projExport" title="Download the whole collection as one file">↓ Backup</button>
+          <button class="ghost" id="projImport" title="Load a backup file into the collection">↑ Import</button>
+        </div>
+        <p class="hint" id="projHint">Saves the artwork and the vinyl &amp; sleeve settings in this browser. Camera, light and background stay as they are, so every vinyl gets the same shot.</p>
+      </section>
+
+      <section>
         <h2>Scene</h2>
         <div class="layouts" id="layouts"></div>
         <div class="row" id="slideRow">
@@ -196,6 +214,7 @@
   </div>
   <input type="file" id="filePick" accept="image/*" hidden />
   <input type="file" id="bgFile" accept="image/*,video/*" hidden />
+  <input type="file" id="backupFile" accept="application/json,.json" hidden />
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
