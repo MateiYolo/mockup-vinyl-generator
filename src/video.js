@@ -49,10 +49,8 @@ export function beginMotion(stage, vinyl, { motion, flip = false }) {
   stage.updateGlint();
   stage.glintFrozen = true; // the varnish reflector stays put in the world while things move
   const cam = stage.camera;
-  const off0 = cam.position.clone().sub(stage.controls.target);
   const b = {
     stage, vinyl, cam, flip: motion === 'turntable' && flip,
-    az0: Math.atan2(off0.x, off0.z),
     spin0: vinyl.spin.rotation.y, turnQ0: stage.turn.quaternion.clone(), turnPos0: stage.turn.position.clone(),
   };
   // re-frame so the whole layout stays in shot during the full motion
@@ -113,6 +111,7 @@ export function endMotion(b) {
 
 // Encoders: H.264 MP4 (opaque), or ProRes 4444 with an alpha channel for transparent backgrounds.
 async function mp4Writer(w, h, fps) {
+  if (!('VideoEncoder' in window)) throw new Error('WebCodecs is not available in this browser (use Chrome or Edge).');
   const cfg = await pickCodec(w, h, fps);
   const muxer = new Muxer({
     target: new ArrayBufferTarget(),
@@ -173,15 +172,22 @@ function findBoxes(buf, list, found = {}) {
   return found;
 }
 
-function padProresFrame(buf, f) {
+// size of a ProRes frame once each of its slices is padded
+function paddedFrameSize(dv, f) {
+  const pic = f + 8 + dv.getUint16(f + 8);
+  return dv.getUint32(f) + dv.getUint16(pic + 5) * SLICE_SLACK;
+}
+
+// copies the frame at buf[f] into out[o] with the padded slices; returns the bytes written
+function padProresFrame(buf, f, out, o) {
   const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   const hdr = dv.getUint16(f + 8); // frame header size, counted from this field
   const pic = f + 8 + hdr, picHdr = buf[pic] >> 3;
   const n = dv.getUint16(pic + 5); // slices
   const table = pic + picHdr;
   const outSize = dv.getUint32(f) + n * SLICE_SLACK;
-  const out = new Uint8Array(outSize), ov = new DataView(out.buffer);
-  out.set(buf.subarray(f, table)); // frame size, 'icpf', frame header, picture header
+  const ov = new DataView(out.buffer, out.byteOffset + o, outSize);
+  out.set(buf.subarray(f, table), o); // frame size, 'icpf', frame header, picture header
   ov.setUint32(0, outSize);
   ov.setUint16(10, 1); // frame header version 1
   const picOut = pic - f;
@@ -191,10 +197,11 @@ function padProresFrame(buf, f) {
     const size = dv.getUint16(table + 2 * i);
     if (size + SLICE_SLACK > 0xffff) throw new Error('ProRes slice too large to pad.');
     ov.setUint16(table - f + 2 * i, size + SLICE_SLACK);
-    out.set(buf.subarray(src, src + size), dst); // the padding bytes stay zero
+    out.set(buf.subarray(src, src + size), o + dst);
+    out.fill(0, o + dst + size, o + dst + size + SLICE_SLACK);
     src += size; dst += size + SLICE_SLACK;
   }
-  return out;
+  return outSize;
 }
 
 function fixProresMov(mov) {
@@ -206,16 +213,17 @@ function fixProresMov(mov) {
   if (!t.stsz || !t.stsc || !co) throw new Error('Unexpected .mov layout.');
   const dv = new DataView(mov.buffer, mov.byteOffset, mov.byteLength);
 
-  // frames are stored back to back in mdat
+  // frames are stored back to back in mdat. Sizes first, so the padded frames are written straight into the output
+  // (no per-frame copies: a long 4444 clip is several hundred MB)
   const frames = [];
   for (let f = mdat.data; f + 12 <= mdat.pos + mdat.size && tag4(mov, f + 4) === 'icpf'; f += dv.getUint32(f)) {
-    frames.push(padProresFrame(mov, f));
+    frames.push({ src: f, size: paddedFrameSize(dv, f) });
   }
   const count = dv.getUint32(t.stsz.data + 8);
   if (frames.length !== count) throw new Error('Unexpected ProRes stream.');
 
   // new file: everything before mdat, new mdat, moov with patched tables
-  const payload = frames.reduce((n, f) => n + f.length, 0);
+  const payload = frames.reduce((n, f) => n + f.size, 0);
   const large = payload + 8 > 0xffffffff;
   const head = large ? 16 : 8;
   const before = mov.subarray(0, mdat.pos);
@@ -228,7 +236,7 @@ function fixProresMov(mov) {
   else { odv.setUint32(p, head + payload); out.set([109, 100, 97, 116], p + 4); }
   p += head;
   const offsets = [];
-  for (const f of frames) { offsets.push(p); out.set(f, p); p += f.length; }
+  for (const f of frames) { offsets.push(p); p += padProresFrame(mov, f.src, out, p); }
   const m = p, mv = new DataView(out.buffer, m);
   out.set(moovBytes, m);
   const rel = (b) => b.pos - moov.pos;
@@ -236,9 +244,9 @@ function fixProresMov(mov) {
   // stsz: per-sample sizes (or the single constant size of a one-frame clip)
   const sz = rel(t.stsz) + (t.stsz.data - t.stsz.pos);
   if (mv.getUint32(sz + 4) !== 0) {
-    if (frames.some((f) => f.length !== frames[0].length)) throw new Error('Unexpected ProRes sample table.');
-    mv.setUint32(sz + 4, frames[0].length);
-  } else frames.forEach((f, i) => mv.setUint32(sz + 12 + 4 * i, f.length));
+    if (frames.some((f) => f.size !== frames[0].size)) throw new Error('Unexpected ProRes sample table.');
+    mv.setUint32(sz + 4, frames[0].size);
+  } else frames.forEach((f, i) => mv.setUint32(sz + 12 + 4 * i, f.size));
 
   // stsc -> samples per chunk, then rewrite each chunk offset to its first sample
   const sc = t.stsc.data, nsc = dv.getUint32(sc + 4);
@@ -299,8 +307,11 @@ async function proresWriter(w, h, fps, onStatus) {
       onStatus && onStatus('Writing the .mov…');
       await ff.writeFile('list.txt', segs.map((n) => `file '${n}'`).join('\n'));
       await run(['-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c', 'copy', 'out.mov']); // moov last: fixProresMov relies on it
-      const data = fixProresMov(await ff.readFile('out.mov'));
-      return new Blob([data], { type: 'video/quicktime' });
+      // free the worker's in-memory files as soon as possible: the whole clip would otherwise be held 2-3 times
+      for (const n of [...segs, 'list.txt']) await ff.deleteFile(n);
+      const mov = await ff.readFile('out.mov');
+      await ff.deleteFile('out.mov');
+      return new Blob([fixProresMov(mov)], { type: 'video/quicktime' });
     },
     close() { ff.terminate(); },
   };
@@ -309,7 +320,6 @@ async function proresWriter(w, h, fps, onStatus) {
 // Renders a seamless loop frame-by-frame (deterministic, not real-time) and encodes it.
 // alpha: transparent background -> ProRes 4444 .mov, otherwise MP4 (H.264).
 export async function renderLoop({ stage, vinyl, w, h, fps, duration, turns, motion, flip, alpha, onProgress, onStatus }) {
-  if (!('VideoEncoder' in window)) throw new Error('WebCodecs is not available in this browser (use Chrome or Edge).');
   const writer = alpha ? await proresWriter(w, h, fps, onStatus) : await mp4Writer(w, h, fps);
   const base = beginMotion(stage, vinyl, { motion, flip });
   const frames = Math.round(duration * fps);

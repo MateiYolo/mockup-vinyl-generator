@@ -442,7 +442,7 @@ function buildLayouts() {
     const b = document.createElement('button');
     b.className = 'layout'; b.dataset.v = k;
     b.innerHTML = `${L.icon}<span>${L.name}</span>`;
-    b.onclick = () => { stopPreview(); state.layout = k; applyLayout(); refreshCam(); };
+    b.onclick = () => { state.layout = k; applyLayout(); refreshCam(); };
     wrap.appendChild(b);
   }
 }
@@ -606,7 +606,17 @@ function buildControls() {
 function applyBg() {
   if (state.bgMode === 'media' && !bgMedia) state.bgMode = 'color';
   stage.setBackground(state.bg, state.bgMode === 'transparent', state.bgMode === 'media' ? bgMedia : null);
+  // don't keep decoding a backdrop video that isn't shown
+  const v = bgMedia?.el instanceof HTMLVideoElement ? bgMedia.el : null;
+  if (v) state.bgMode === 'media' ? v.play().catch(() => {}) : v.pause();
   refreshBg();
+}
+const VID_DUR_MAX = 15;
+function releaseBgMedia() {
+  if (!bgMedia) return;
+  if (bgMedia.el instanceof HTMLVideoElement) bgMedia.el.pause();
+  URL.revokeObjectURL(bgMedia.url);
+  bgMedia = null;
 }
 function loadVideo(url) {
   return new Promise((res, rej) => {
@@ -627,29 +637,32 @@ async function setBgFile(file) {
       c.width = 96; c.height = Math.round((96 * h) / w);
       c.getContext('2d').drawImage(el, 0, 0, c.width, c.height);
       thumb = c.toDataURL();
-      el.play().catch(() => {});
-      // a loop as long as the backdrop video makes both loop together seamlessly
+      // a loop exactly as long as the backdrop video makes both loop together seamlessly
+      // (not rounded to the slider step: a 6.04s clip in a 6.0s loop would jump at the seam)
       if (Number.isFinite(el.duration) && el.duration <= 30) {
-        $('vidDur').max = Math.max(15, Math.ceil(el.duration));
-        state.vid.duration = Math.round(el.duration * 10) / 10;
+        $('vidDur').max = Math.max(VID_DUR_MAX, Math.ceil(el.duration));
+        state.vid.duration = el.duration;
         refreshVidDur();
       }
     } else {
       el = await loadImage(url);
       w = el.naturalWidth; h = el.naturalHeight; thumb = url;
     }
-    if (bgMedia?.el instanceof HTMLVideoElement) bgMedia.el.pause();
-    bgMedia = { el, w, h, thumb, name: file.name };
+    releaseBgMedia();
+    bgMedia = { el, w, h, thumb, url, name: file.name };
     state.bgMode = 'media';
     applyBg();
     if (preview) { stopPreview(); startPreview(); }
   } catch (e) {
+    URL.revokeObjectURL(url);
     alert(e.message || 'Could not load this file.');
   }
 }
 function clearBgMedia() {
-  if (bgMedia?.el instanceof HTMLVideoElement) bgMedia.el.pause();
-  bgMedia = null;
+  releaseBgMedia();
+  $('vidDur').max = VID_DUR_MAX;
+  if (state.vid.duration > VID_DUR_MAX) state.vid.duration = VID_DUR_MAX;
+  refreshVidDur();
   applyBg();
 }
 
@@ -700,7 +713,7 @@ function tickPreview(now) {
   const t = (secs / v.duration) % 1;
   applyMotion(preview.base, t, v);
   stage.invalidate(v.motion === 'turntable'); // turntable moves the shadows, spin/sway don't
-  $('loopBadge').textContent = `${state.frame} · ${(t * v.duration).toFixed(1)}s / ${v.duration}s`;
+  $('loopBadge').textContent = `${state.frame} · ${(t * v.duration).toFixed(1)}s / ${+v.duration.toFixed(2)}s`;
 }
 
 // ---------------------------------------------------------------- export

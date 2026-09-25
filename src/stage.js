@@ -403,8 +403,13 @@ export class Stage {
     v.pause();
     const time = t % v.duration;
     if (Math.abs(v.currentTime - time) < 1e-3) return Promise.resolve();
-    return new Promise((res) => {
-      v.addEventListener('seeked', () => res(), { once: true });
+    return new Promise((res, rej) => {
+      // never hang the export on a seek that doesn't complete
+      const done = (err) => { clearTimeout(timer); v.removeEventListener('seeked', ok); v.removeEventListener('error', ko); err ? rej(err) : res(); };
+      const ok = () => done(), ko = () => done(new Error('The background video could not be read.'));
+      const timer = setTimeout(() => done(new Error('The background video stopped responding while seeking.')), 5000);
+      v.addEventListener('seeked', ok);
+      v.addEventListener('error', ko);
       v.currentTime = time;
     });
   }
