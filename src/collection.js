@@ -19,6 +19,7 @@ async function tx(mode, fn) {
     const req = fn(t.objectStore(STORE));
     t.oncomplete = () => res(req?.result);
     t.onerror = () => rej(t.error);
+    t.onabort = () => rej(t.error || new Error('The browser storage refused the change (full?).')); // e.g. quota exceeded
   });
 }
 

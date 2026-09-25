@@ -673,6 +673,9 @@ const snapshot = () => JSON.stringify([settingsOf(), Object.keys(SLOTS).map((k) 
 
 function applySettings(s) {
   for (const k of PROJECT_KEYS) if (s[k] !== undefined) state[k] = structuredClone(s[k]);
+  // a vinyl saved before a finish was added lacks its colours (or names a finish that no longer exists)
+  state.vinylColors = { ...structuredClone(DEFAULTS.vinylColors), ...state.vinylColors };
+  if (!VINYLS[state.vinyl]) state.vinyl = DEFAULTS.vinyl;
   Object.assign(seeds, s.seeds);
   if (s.splitAngle !== undefined) splitAngle = s.splitAngle;
   sleeve.setFinish(state.finish);
@@ -713,7 +716,10 @@ const confirmDiscard = () => savedSnap === snapshot()
 function refreshDirty() { $('projDirty').hidden = savedSnap === snapshot(); }
 function markSaved() { savedSnap = snapshot(); refreshDirty(); }
 
+let saving = false;
 async function saveProject() {
+  if (saving) return; // ⌘S / Enter bypass the disabled button: a second save would create a duplicate
+  saving = true;
   const name = $('projName').value.trim() || 'Untitled vinyl';
   $('projSave').disabled = true;
   try {
@@ -730,6 +736,7 @@ async function saveProject() {
     console.error(e);
     alert('Could not save: ' + e.message);
   } finally {
+    saving = false;
     $('projSave').disabled = false;
     renderProjects();
   }
@@ -828,7 +835,8 @@ function buildCollection() {
   };
   // ⌘S / Ctrl+S saves the current vinyl
   window.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); saveProject(); } });
-  window.addEventListener('beforeunload', (e) => { if (DEFAULTS && savedSnap !== snapshot()) e.preventDefault(); });
+  // only guards a vinyl from the collection: tweaking the default one without ever saving shouldn't nag on reload
+  window.addEventListener('beforeunload', (e) => { if (project.id && savedSnap !== snapshot()) e.preventDefault(); });
 }
 
 // ---------------------------------------------------------------- loop preview
