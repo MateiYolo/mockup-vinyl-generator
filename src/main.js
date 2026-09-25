@@ -23,6 +23,8 @@ const state = {
   vid: { format: '4:5', motion: 'spin', duration: 6, turns: 1, fps: 30 },
   exposure: 1,
   lift: 0,
+  varnish: true,
+  glint: 0.6,
   wear: 0.4,
   warp: 0.25,
   dust: 0.3,
@@ -192,6 +194,8 @@ stage.beforeRender = () => {
 const SLOTS = {
   coverFront: { name: 'Cover front', url: '/assets/cover-front.png' },
   coverBack: { name: 'Cover back', url: '/assets/cover-back.png' },
+  varnishFront: { name: 'Varnish front', url: '/assets/varnish-front.png', varnish: true },
+  varnishBack: { name: 'Varnish back', url: '/assets/varnish-back.png', varnish: true },
   insertRecto: { name: 'Insert recto', url: '/assets/insert-recto.jpg' },
   insertVerso: { name: 'Insert verso', url: '/assets/insert-verso.jpg' },
   labelA: { name: 'Label side A', url: '/assets/label-a.png', round: true },
@@ -228,6 +232,8 @@ function applySlot(key) {
       sleeve.setEdge(state.edge);
       break;
     case 'coverBack': sleeve.setArt('back', img); break;
+    case 'varnishFront': sleeve.setVarnishMask('front', img); refreshVarnishUI(); break;
+    case 'varnishBack': sleeve.setVarnishMask('back', img); refreshVarnishUI(); break;
     case 'insertRecto': insert.setArt('front', img); break;
     case 'insertVerso': insert.setArt('back', img); break;
     case 'labelA':
@@ -251,7 +257,10 @@ function buildSlots() {
     const b = document.createElement('div');
     b.className = 'slot';
     b.dataset.k = k;
-    b.innerHTML = `<div class="thumb ${s.round ? 'round' : ''}"></div><span>${s.name}</span>`;
+    b.innerHTML = `<div class="thumb ${s.round ? 'round' : ''} ${s.varnish ? 'varnish' : ''}"></div><span>${s.name}</span>`
+      + (s.varnish ? '<button class="slot-clear" title="Remove">×</button>' : '');
+    const clr = b.querySelector('.slot-clear');
+    if (clr) clr.onclick = (e) => { e.stopPropagation(); clearSlot(k); };
     b.onclick = () => pickFile(k);
     b.ondragover = (e) => { e.preventDefault(); b.classList.add('drag'); };
     b.ondragleave = () => b.classList.remove('drag');
@@ -262,6 +271,20 @@ function buildSlots() {
     };
     wrap.appendChild(b);
   }
+}
+function clearSlot(k) {
+  delete images[k];
+  const side = k === 'varnishFront' ? 'front' : 'back';
+  sleeve.setVarnishMask(side, null);
+  document.querySelector(`.slot[data-k="${k}"] .thumb`).style.backgroundImage = '';
+  refreshVarnishUI();
+  stage.invalidate();
+}
+function refreshVarnishUI() {
+  const has = !!(images.varnishFront || images.varnishBack);
+  $('varnishRows').style.display = has ? '' : 'none';
+  $('varnishNone').style.display = has ? 'none' : '';
+  stage.setGlint(has && state.varnish ? state.glint : 0);
 }
 let pickKey = null;
 function pickFile(k) { pickKey = k; $('filePick').value = ''; $('filePick').click(); }
@@ -438,6 +461,8 @@ function buildControls() {
   seg('side', () => state.side, (v) => { state.side = v; vinyl.setSide(v); });
   seg('finish', () => state.finish, (v) => { state.finish = v; sleeve.setFinish(v); insert.setFinish(v === 'gloss' ? 'satin' : 'matte'); });
   $('edgeColor').oninput = (e) => { state.edge = e.target.value; sleeve.setEdge(state.edge); };
+  seg('varnishOn', () => (state.varnish ? 'on' : 'off'), (v) => { state.varnish = v === 'on'; sleeve.setVarnish({ on: state.varnish }); refreshVarnishUI(); });
+  slider('glint', () => state.glint, (x) => { state.glint = x; refreshVarnishUI(); }, (x) => Math.round(x * 100));
   seg('frame', () => state.frame, (v) => { state.frame = v; fitViewport(); stage.frame({}, true); });
 
   // camera
@@ -687,6 +712,7 @@ function tick(now) {
     try { images[k] = await loadImage(s.url); } catch { /* optional */ }
   }));
   Object.keys(SLOTS).forEach((k) => images[k] && applySlot(k));
+  refreshVarnishUI();
   applyVinyl();
   sleeve.setFinish(state.finish);
   sleeve.setWarp(state.warp);

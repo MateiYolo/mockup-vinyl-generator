@@ -126,3 +126,7 @@ details.adv[open] summary::before { content: '▾ '; }
 .loop-badge { position: absolute; left: 10px; top: 10px; background: rgba(0,0,0,.55); color: #fff; font-size: 11px; padding: 4px 8px; border-radius: 6px; font-variant-numeric: tabular-nums; backdrop-filter: blur(4px); }
 .loop-badge::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: 1px; }
 .loop-badge[hidden] { display: none; }
+
+.slot .thumb.varnish { background-color: #f2f0ec; }
+.slot-clear { position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); color: #fff; font-size: 13px; line-height: 20px; padding: 0; display: none; }
+.slot:hover .slot-clear { display: block; }

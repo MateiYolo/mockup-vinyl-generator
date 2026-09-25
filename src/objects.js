@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { R, makeDustMap, makeLabelBump, makeBoardSurface, composeArtwork } from './textures.js';
+import { R, makeDustMap, makeLabelBump, makeBoardSurface, composeArtwork, makeVarnishMaps } from './textures.js';
 
 export const SLEEVE = { w: 31.4, t: 0.35 };
 export const INSERT = { w: 30.5, t: 0.03 };
@@ -223,6 +223,8 @@ class Card {
     this.edge = paperMaterial({ roughness: 0.9, color: 0xf2f0ec, bumpMap: boardSurface, bumpScale: 1 });
     this.w = w; this.t = t;
     this.warp = 0; this.wear = 0.4; this.images = {};
+    this.finish = 'matte';
+    this.varnish = { on: true, strength: 1, maps: {} };
     this.geo = {};
     this.buildGeometry();
     this.mesh = new THREE.Mesh(this.geo.front, [this.edge, this.edge, this.edge, this.edge, this.front, this.back]);
@@ -252,8 +254,8 @@ class Card {
     this.buildGeometry();
     meshes.forEach((m, i) => this.orient(m, faces[i]));
   }
-  makeTex(img, seed) {
-    const t = new THREE.CanvasTexture(composeArtwork(img, this.wear, seed));
+  makeTex(img, seed, varnish) {
+    const t = new THREE.CanvasTexture(composeArtwork(img, this.wear, seed, 2048, varnish));
     t.colorSpace = THREE.SRGBColorSpace;
     t.anisotropy = this.opts.maxAniso;
     return t;
@@ -262,7 +264,8 @@ class Card {
     this.images[side] = img;
     const m = side === 'front' ? this.front : this.back;
     m.map?.dispose();
-    m.map = img ? this.makeTex(img, side === 'front' ? 1 : 2) : null;
+    const v = this.varnish.on ? this.varnish.maps[side] : null;
+    m.map = img ? this.makeTex(img, side === 'front' ? 1 : 2, v) : null;
     m.needsUpdate = true;
   }
   setWear(v) {
@@ -271,10 +274,43 @@ class Card {
   }
   setEdge(color) { this.edge.color.set(color); }
   setFinish(finish) {
-    for (const m of [this.front, this.back]) {
-      if (finish === 'gloss') { m.roughness = 0.3; m.clearcoat = 0.7; m.clearcoatRoughness = 0.08; m.bumpScale = 0.15; m.sheen = 0; }
-      else if (finish === 'satin') { m.roughness = 0.55; m.clearcoat = 0.25; m.clearcoatRoughness = 0.35; m.bumpScale = 0.3; m.sheen = 0.15; }
+    this.finish = finish;
+    this.applySurface();
+  }
+  // Spot (selective) varnish: a glossy transparent layer on the masked areas only.
+  setVarnishMask(side, img) {
+    const old = this.varnish.maps[side];
+    old && [old.mask, old.normal, old.surface].forEach((t) => t && t.dispose());
+    this.varnish.maps[side] = img ? makeVarnishMaps(img, 2048, boardSurface.image) : null;
+    if (this.images[side]) this.setArt(side, this.images[side]);
+    this.applySurface();
+  }
+  setVarnish({ on = this.varnish.on, strength = this.varnish.strength } = {}) {
+    const changed = on !== this.varnish.on;
+    Object.assign(this.varnish, { on, strength });
+    if (changed) for (const side of ['front', 'back']) if (this.images[side]) this.setArt(side, this.images[side]);
+    this.applySurface();
+  }
+  applySurface() {
+    for (const [side, m] of [['front', this.front], ['back', this.back]]) {
+      const f = this.finish;
+      if (f === 'gloss') { m.roughness = 0.3; m.clearcoat = 0.7; m.clearcoatRoughness = 0.08; m.bumpScale = 0.15; m.sheen = 0; }
+      else if (f === 'satin') { m.roughness = 0.55; m.clearcoat = 0.25; m.clearcoatRoughness = 0.35; m.bumpScale = 0.3; m.sheen = 0.15; }
       else { m.roughness = 0.82; m.clearcoat = 0; m.bumpScale = 0.5; m.sheen = 0.35; }
+      m.clearcoatMap = null;
+      m.clearcoatNormalMap = null;
+      m.bumpMap = m.roughnessMap = boardSurface;
+      const v = this.varnish.maps[side];
+      if (v && this.varnish.on && f !== 'gloss') {
+        // varnish sits on top of the board: its own smooth normal (only the raised edges), mirror-like
+        m.clearcoat = this.varnish.strength;
+        m.clearcoatMap = v.mask;
+        m.clearcoatRoughness = 0.05;
+        m.clearcoatNormalMap = v.normal;
+        m.clearcoatNormalScale.set(1, 1);
+        // the raised layer also shapes the paper shading underneath (visible under any light)
+        if (v.surface) { m.bumpMap = m.roughnessMap = v.surface; m.bumpScale = f === 'satin' ? 0.55 : 0.8; }
+      }
       m.needsUpdate = true;
     }
   }

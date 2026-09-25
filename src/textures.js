@@ -457,7 +457,7 @@ function grime(size) {
   return grimeCanvas;
 }
 
-export function composeArtwork(image, wear = 0.4, seed = 1, size = 2048) {
+export function composeArtwork(image, wear = 0.4, seed = 1, size = 2048, varnishMask = null) {
   const c = canvas(size);
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#fff';
@@ -502,6 +502,115 @@ export function composeArtwork(image, wear = 0.4, seed = 1, size = 2048) {
       ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); ctx.stroke();
     }
   }
+  if (varnishMask) {
+    // varnish deepens the ink underneath slightly (wet look)
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.drawImage(varnishMask.tint, 0, 0, size, size);
+  }
   ctx.globalCompositeOperation = 'source-over';
   return c;
+}
+
+// ---------- spot varnish ----------
+// Any opaque, non-white pixel of the supplied file is varnish (the flat colour is just a marker).
+export function makeVarnishMaps(image, size = 2048, boardCanvas = null) {
+  const c = canvas(size);
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(image, 0, 0, size, size);
+  const src = ctx.getImageData(0, 0, size, size);
+  const d = src.data;
+  const m = new Float32Array(size * size);
+  for (let i = 0; i < size * size; i++) {
+    const o = i * 4;
+    const ink = 1 - Math.min(d[o], d[o + 1], d[o + 2]) / 255;
+    m[i] = Math.min(1, (d[o + 3] / 255) * Math.min(1, ink * 1.5));
+  }
+  // mask (R = clearcoat amount)
+  const out = ctx.createImageData(size, size);
+  for (let i = 0; i < size * size; i++) {
+    const v = m[i] * 255, o = i * 4;
+    out.data[o] = out.data[o + 1] = out.data[o + 2] = v;
+    out.data[o + 3] = 255;
+  }
+  const maskC = canvas(size);
+  maskC.getContext('2d').putImageData(out, 0, 0);
+
+  // height: blurred mask -> the varnish layer has a soft raised edge that catches the light
+  const hC = canvas(size);
+  const hctx = hC.getContext('2d', { willReadFrequently: true });
+  hctx.filter = `blur(${Math.max(2, Math.round(size / 700))}px)`; // ~0.4 mm rounded bevel
+  hctx.drawImage(maskC, 0, 0);
+  const h = hctx.getImageData(0, 0, size, size).data;
+  const nimg = ctx.createImageData(size, size);
+  const H = (x, y) => h[(Math.min(size - 1, Math.max(0, y)) * size + Math.min(size - 1, Math.max(0, x))) * 4] / 255;
+  const k = 6;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const du = (H(x + 1, y) - H(x - 1, y)) * k;
+      const dv = -(H(x, y + 1) - H(x, y - 1)) * k; // canvas rows go down, texture v goes up
+      const len = Math.hypot(du, dv, 1);
+      const o = (y * size + x) * 4;
+      nimg.data[o] = (-du / len * 0.5 + 0.5) * 255;
+      nimg.data[o + 1] = (-dv / len * 0.5 + 0.5) * 255;
+      nimg.data[o + 2] = (1 / len * 0.5 + 0.5) * 255;
+      nimg.data[o + 3] = 255;
+    }
+  }
+  const nC = canvas(size);
+  nC.getContext('2d').putImageData(nimg, 0, 0);
+
+  // tint used to deepen the artwork under the varnish
+  const inv = canvas(size);
+  const ictx = inv.getContext('2d');
+  ictx.fillStyle = '#fff'; ictx.fillRect(0, 0, size, size);
+  ictx.globalCompositeOperation = 'difference';
+  ictx.drawImage(maskC, 0, 0); // inverted mask: white outside, black inside
+  const tint2 = canvas(size);
+  const t2 = tint2.getContext('2d');
+  t2.fillStyle = '#ededed'; t2.fillRect(0, 0, size, size); // ~7% darker
+  t2.globalCompositeOperation = 'lighten';
+  t2.drawImage(inv, 0, 0);
+
+  // micro contact shadow just outside the raised layer (never on top of it)
+  const halo = canvas(size);
+  const hl = halo.getContext('2d', { willReadFrequently: true });
+  hl.filter = `blur(${Math.max(2, Math.round(size / 600))}px)`;
+  hl.drawImage(maskC, 0, 0);
+  const hb2 = hl.getImageData(0, 0, size, size).data;
+  const himg = ctx.createImageData(size, size);
+  for (let i = 0; i < size * size; i++) {
+    const o = i * 4;
+    const ring = Math.max(0, hb2[o] / 255 - m[i]); // only outside the edge
+    const v = 255 * (1 - Math.min(1, ring * 2) * 0.22);
+    himg.data[o] = himg.data[o + 1] = himg.data[o + 2] = v;
+    himg.data[o + 3] = 255;
+  }
+  const haloC = canvas(size);
+  haloC.getContext('2d').putImageData(himg, 0, 0);
+  t2.globalCompositeOperation = 'multiply';
+  t2.drawImage(haloC, 0, 0);
+
+  // board surface with the varnish baked in: R = height (smooth raised plateau + bevel), G = roughness (glossy)
+  let surface = null;
+  if (boardCanvas) {
+    const bd = boardCanvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, size, size).data;
+    const simg = ctx.createImageData(size, size);
+    for (let i = 0; i < size * size; i++) {
+      const o = i * 4;
+      const ms = m[i], hb = h[o] / 255;
+      const board = bd[o] / 255;
+      simg.data[o] = (0.22 + board * 0.45 * (1 - ms) + hb * 0.45) * 255; // plateau sits clearly above the fibres
+      simg.data[o + 1] = (bd[o + 1] / 255 * (1 - ms) + 0.28 * ms) * 255;
+      simg.data[o + 2] = 0;
+      simg.data[o + 3] = 255;
+    }
+    const sC = canvas(size);
+    sC.getContext('2d').putImageData(simg, 0, 0);
+    surface = new THREE.CanvasTexture(sC);
+    surface.colorSpace = THREE.NoColorSpace;
+    surface.anisotropy = 8;
+  }
+
+  const mk = (cv) => { const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.NoColorSpace; t.anisotropy = 8; return t; };
+  return { mask: mk(maskC), normal: mk(nC), tint: tint2, surface };
 }

@@ -53,6 +53,15 @@
           <label>Edge / spine</label>
           <input type="color" id="edgeColor" />
         </div>
+        <div class="row">
+          <label>Spot varnish</label>
+          <div class="seg" id="varnishOn"><button data-v="on">On</button><button data-v="off">Off</button></div>
+        </div>
+        <div id="varnishRows">
+          <div class="row"><label>Reflector</label><input type="range" id="glint" min="0" max="1" step="0.01" /><output id="glintOut"></output></div>
+          <p class="hint">Reflector = a soft light placed at the mirror angle of the camera so the glossy varnish catches it. Orbit the camera to see it come and go.</p>
+        </div>
+        <p class="hint" id="varnishNone">Drop a varnish mask in the Artwork slots (any colour on transparent = varnish).</p>
         <div class="row"><label>Wear</label><input type="range" id="wear" min="0" max="1" step="0.01" /><output id="wearOut"></output></div>
         <div class="row"><label>Warp</label><input type="range" id="warp" min="0" max="1.2" step="0.01" /><output id="warpOut"></output></div>
       </section>

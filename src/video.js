@@ -23,6 +23,8 @@ export const MOTIONS = {
 export function beginMotion(stage, vinyl, motion) {
   // turntable: re-frame so the whole layout stays in shot during the full revolution
   const restoreFrame = motion === 'turntable' ? stage.frameForTurntable() : null;
+  stage.updateGlint();
+  stage.glintFrozen = true; // the varnish reflector stays put in the world while things move
   const cam = stage.camera, target = stage.controls.target.clone();
   const startPos = cam.position.clone();
   const off = startPos.clone().sub(target);
@@ -55,6 +57,7 @@ export function applyMotion(b, t, { motion, turns }) {
 }
 
 export function endMotion(b) {
+  b.stage.glintFrozen = false;
   b.vinyl.spin.rotation.y = b.spin0;
   b.stage.turn.rotation.y = b.turn0;
   b.cam.position.copy(b.startPos);
@@ -80,7 +83,7 @@ export async function renderLoop({ stage, vinyl, w, h, fps, duration, turns, mot
 
   const base = beginMotion(stage, vinyl, motion);
   const frames = Math.round(duration * fps);
-  const samples = 32;
+  const samples = 56;
 
   try {
     for (let i = 0; i < frames; i++) {

@@ -97,7 +97,22 @@ class ContactShadow {
 }
 
 // Photo studio used for reflections only: dim room, big key softbox, overhead box, rim strip, fill card.
-function studioEnvironment() {
+let softboxTex = null;
+function softbox() {
+  if (softboxTex) return softboxTex;
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(64, 64, 10, 64, 64, 64);
+  g.addColorStop(0, '#fff'); g.addColorStop(0.55, '#fff'); g.addColorStop(1, '#000');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  softboxTex = new THREE.CanvasTexture(c);
+  return softboxTex;
+}
+
+// glints: [{ dir: Vector3 (env space), intensity }] soft reflectors placed where the camera sees their mirror image
+function studioEnvironment(glints = []) {
   const scene = new THREE.Scene();
   const room = new THREE.Mesh(new THREE.BoxGeometry(120, 80, 120), new THREE.MeshBasicMaterial({ color: 0x4a4744, side: THREE.BackSide }));
   room.position.y = 25;
@@ -115,6 +130,16 @@ function studioEnvironment() {
   panel(60, 60, 0, 88, 38, 1.3); // overhead
   panel(8, 50, 60, 18, 42, 5); // rim strip
   panel(46, 40, -30, 10, 44, 2.4); // white fill card behind the camera
+  for (const { dir, intensity } of glints) {
+    // long, soft strip softbox, tilted: its mirror image sweeps a diagonal band across the cover
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(80, 7), new THREE.MeshBasicMaterial({
+      map: softbox(), color: new THREE.Color(intensity, intensity, intensity), side: THREE.DoubleSide, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    m.position.copy(dir).normalize().multiplyScalar(36);
+    m.lookAt(0, 0, 0);
+    m.rotateZ(0.45);
+    scene.add(m);
+  }
   return scene;
 }
 
@@ -139,8 +164,11 @@ export class Stage {
     r.shadowMap.type = THREE.PCFSoftShadowMap;
 
     const scene = (this.scene = new THREE.Scene());
-    const pmrem = new THREE.PMREMGenerator(r);
-    scene.environment = pmrem.fromScene(studioEnvironment(), 0.02).texture;
+    this.pmrem = new THREE.PMREMGenerator(r);
+    this.envRT = this.pmrem.fromScene(studioEnvironment(), 0.02);
+    scene.environment = this.envRT.texture;
+    this.glint = 0; // "varnish reflector" strength
+    this.glintKey = '';
     scene.environmentIntensity = 0.35;
 
     this.camera = new THREE.PerspectiveCamera(30, 1, 1, 2000);
@@ -267,7 +295,7 @@ export class Stage {
         this.floor.material.opacity = Math.min(1, 2 * L.strength * this.shadowMul());
       } else {
         // uniform sky dome sample (above ~8 deg)
-        const y0 = Math.sin(12 * DEG), y = y0 + halton(j, 2) * (1 - y0), ph = halton(j, 3) * Math.PI * 2, k = Math.sqrt(1 - y * y);
+        const y0 = Math.sin(18 * DEG), y = y0 + halton(j, 2) * (1 - y0), ph = halton(j, 3) * Math.PI * 2, k = Math.sqrt(1 - y * y);
         d.set(Math.cos(ph) * k, y, Math.sin(ph) * k);
         this.key.intensity = 2 * L.sky;
         this.floor.material.opacity = Math.min(1, 2 * L.ambient * this.shadowMul());
@@ -348,12 +376,12 @@ export class Stage {
     this.key.target.position.copy(c);
     const sc = this.key.shadow.camera;
     // A shadow on the floor shares its light-space xy with its occluder, so the frustum only needs to cover the
-    // objects themselves. Depth must reach the end of the longest grazing shadow (lowest sky sample is 12 deg).
+    // objects themselves. Depth must reach the end of the longest grazing shadow (lowest sky sample is 18 deg).
     // Keeping the range tight keeps depth precision (and the bias, in cm) small -> shadows hug their objects.
     const half = size / 2 + 3;
     const height = this.box.max.y + 2;
     const near = Math.max(0.5, this.lightDist - size / 2 - 5);
-    const far = this.lightDist + size / 2 + height / Math.sin(12 * DEG) + 5;
+    const far = this.lightDist + size / 2 + height / Math.sin(18 * DEG) + 5;
     Object.assign(sc, { left: -half, right: half, top: half, bottom: -half, near, far });
     this.key.shadow.bias = -0.012 / (far - near);
     sc.updateProjectionMatrix();
@@ -361,6 +389,29 @@ export class Stage {
     this.scene.environmentIntensity = L.env;
     this.scene.environmentRotation.y = (L.az - 225) * DEG;
     this.invalidate();
+  }
+
+  setGlint(v) { this.glint = v; this.glintKey = ''; this.invalidate(false); }
+
+  // Re-bake the studio with a soft reflector at the mirror angle of the camera, for flat (up-facing) and
+  // upright (front-facing) surfaces, so glossy spot varnish catches the light like in a product photo.
+  updateGlint() {
+    const cam = this.camera.position, t = this.controls.target;
+    const v = cam.clone().sub(t).normalize();
+    const key = this.glint > 0 ? [v.x, v.y, v.z, this.scene.environmentRotation.y, this.glint].map((n) => n.toFixed(2)).join() : 'off';
+    if (key === this.glintKey || this.glintFrozen) return;
+    this.glintKey = key;
+    const glints = [];
+    if (this.glint > 0 && v.y > 0) {
+      const toEnv = new THREE.Matrix4().makeRotationY(-this.scene.environmentRotation.y);
+      const I = 9 * this.glint;
+      glints.push({ dir: new THREE.Vector3(-v.x, v.y, -v.z).applyMatrix4(toEnv), intensity: I }); // mirror of a flat surface
+      glints.push({ dir: new THREE.Vector3(-v.x, -v.y, v.z).applyMatrix4(toEnv), intensity: I }); // mirror of a front-facing one
+    }
+    const old = this.envRT;
+    this.envRT = this.pmrem.fromScene(studioEnvironment(glints), 0.02);
+    this.scene.environment = this.envRT.texture;
+    old.dispose();
   }
 
   // one "Shadows" slider scales key shadow, ambient occlusion and contact together (0.5 = preset values)
@@ -478,7 +529,10 @@ export class Stage {
     const moving = performance.now() - this.lastInvalidate < 160;
     this.acc = moving ? this.accLo : this.accHi;
     if (moving) this.ensureTargets(size.x * this.loScale, size.y * this.loScale, 4);
-    else this.ensureTargets(size.x, size.y, 0);
+    else {
+      this.ensureTargets(size.x, size.y, 0);
+      if (this.acc.n === 0) this.updateGlint();
+    }
     if (this.acc.n >= this.acc.max) return;
     this.beforeRender && this.beforeRender();
     const t0 = performance.now();
@@ -498,6 +552,7 @@ export class Stage {
     const prevAcc = this.acc;
     this.acc = this.accEx;
     this.ensureTargets(w, h, 0);
+    this.updateGlint();
     this.invalidate();
     this.beforeRender && this.beforeRender();
     for (let i = 0; i < samples; i++) this.accumulate();
