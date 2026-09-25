@@ -614,3 +614,38 @@ export function makeVarnishMaps(image, size = 2048, boardCanvas = null) {
   const mk = (cv) => { const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.NoColorSpace; t.anisotropy = 8; return t; };
   return { mask: mk(maskC), normal: mk(nC), tint: tint2, surface };
 }
+
+// ---------- seamless backdrop paper: fine tooth (bump) + faint large-scale mottling (tone) ----------
+export function makeBackdropMaps() {
+  const S = 512;
+  const bc = canvas(S), bctx = bc.getContext('2d'), bimg = bctx.createImageData(S, S);
+  const tc = canvas(S), tctx = tc.getContext('2d'), timg = tctx.createImageData(S, S);
+  const n = makeNoise(17), rand = rng(53);
+  // tileable noise: blend the four wrapped copies of the field
+  const tile = (f, x, y, p) => {
+    const u = x / S, v = y / S;
+    return (f(x, y) * (1 - u) * (1 - v) + f(x - S, y) * u * (1 - v) + f(x, y - S) * (1 - u) * v + f(x - S, y - S) * u * v) * p;
+  };
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const o = (y * S + x) * 4;
+      const h = 0.5 + (tile((a, b) => n.fbm(a / 6 + 40, b / 6, 3), x, y, 1) - 0.5) * 0.5 + (rand() - 0.5) * 0.18;
+      bimg.data[o] = bimg.data[o + 1] = bimg.data[o + 2] = Math.max(0, Math.min(1, h)) * 255;
+      bimg.data[o + 3] = 255;
+      const t = tile((a, b) => n.fbm(a / 70, b / 70 + 20, 4), x, y, 1);
+      const v = 1 - Math.max(0, Math.min(1, (t - 0.3) * 2.2)) * 0.05; // ±~2.5% tone
+      timg.data[o] = v * 255; timg.data[o + 1] = v * 254; timg.data[o + 2] = v * 252;
+      timg.data[o + 3] = 255;
+    }
+  }
+  bctx.putImageData(bimg, 0, 0);
+  tctx.putImageData(timg, 0, 0);
+  const mk = (c, cs) => {
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.colorSpace = cs;
+    t.anisotropy = 8;
+    return t;
+  };
+  return { bump: mk(bc, THREE.NoColorSpace), tone: mk(tc, THREE.SRGBColorSpace) };
+}
