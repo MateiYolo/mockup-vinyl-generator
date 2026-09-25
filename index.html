@@ -28,11 +28,14 @@
           <button class="ghost" id="projNew" title="Start a new vinyl (the saved ones stay in the collection)">+ New</button>
         </div>
         <div class="projects" id="projects"></div>
-        <div class="proj-backup">
-          <button class="ghost" id="projExport" title="Download the whole collection as one file">↓ Backup</button>
-          <button class="ghost" id="projImport" title="Load a backup file into the collection">↑ Import</button>
-        </div>
-        <p class="hint" id="projHint">Saves the artwork and the vinyl &amp; sleeve settings in this browser. Camera, light and background stay as they are, so every vinyl gets the same shot.</p>
+        <p class="hint" id="projHint">Saves the artwork, vinyl &amp; sleeve in this browser. The shot (camera, light, background) stays the same across vinyls.</p>
+        <details class="adv" data-k="collection">
+          <summary>Backup</summary>
+          <div class="proj-backup">
+            <button class="ghost" id="projExport" title="Download the whole collection as one file">↓ Backup</button>
+            <button class="ghost" id="projImport" title="Load a backup file into the collection">↑ Import</button>
+          </div>
+        </details>
       </section>
 
       <section>
@@ -43,20 +46,22 @@
           <input type="range" id="slide" min="0" max="0.8" step="0.01" />
           <output id="slideOut"></output>
         </div>
-        <div class="row"><label>Float height</label><input type="range" id="lift" min="0" max="8" step="0.1" /><output id="liftOut"></output></div>
-        <div class="row">
-          <label>Vinyl side up</label>
-          <div class="seg" id="side">
-            <button data-v="A">Side A</button><button data-v="B">Side B</button>
+        <details class="adv" data-k="scene">
+          <summary>Advanced</summary>
+          <div class="row"><label>Float height</label><input type="range" id="lift" min="0" max="8" step="0.1" /><output id="liftOut"></output></div>
+          <div class="row">
+            <label>Vinyl side up</label>
+            <div class="seg" id="side">
+              <button data-v="A">Side A</button><button data-v="B">Side B</button>
+            </div>
           </div>
-        </div>
+        </details>
       </section>
 
       <section>
         <h2>Vinyl</h2>
         <div class="swatches" id="swatches"></div>
         <div id="vinylOpts" class="opts"></div>
-        <div class="row"><label>Dust</label><input type="range" id="dust" min="0" max="1" step="0.01" /><output id="dustOut"></output></div>
       </section>
 
       <section>
@@ -68,26 +73,38 @@
           </div>
         </div>
         <div class="row">
-          <label>Edge / spine</label>
-          <input type="color" id="edgeColor" />
+          <label>Condition</label>
+          <div class="seg" id="condition"></div>
         </div>
-        <div class="row">
-          <label>Spot varnish</label>
-          <div class="seg" id="varnishOn"><button data-v="on">On</button><button data-v="off">Off</button></div>
-        </div>
-        <div id="varnishRows">
-          <div class="row"><label>Reflector</label><input type="range" id="glint" min="0" max="1" step="0.01" /><output id="glintOut"></output></div>
-          <p class="hint">Reflector = a soft light placed at the mirror angle of the camera so the glossy varnish catches it. Orbit the camera to see it come and go.</p>
-        </div>
-        <p class="hint" id="varnishNone">Drop a varnish mask in the Artwork slots (any colour on transparent = varnish).</p>
-        <div class="row"><label>Wear</label><input type="range" id="wear" min="0" max="1" step="0.01" /><output id="wearOut"></output></div>
-        <div class="row"><label>Warp</label><input type="range" id="warp" min="0" max="1.2" step="0.01" /><output id="warpOut"></output></div>
+        <details class="adv" data-k="sleeve">
+          <summary>Advanced</summary>
+          <div class="row">
+            <label>Edge / spine</label>
+            <input type="color" id="edgeColor" />
+          </div>
+          <div class="row"><label>Sleeve wear</label><input type="range" id="wear" min="0" max="1" step="0.01" /><output id="wearOut"></output></div>
+          <div class="row"><label>Sleeve warp</label><input type="range" id="warp" min="0" max="1.2" step="0.01" /><output id="warpOut"></output></div>
+          <div class="row"><label>Vinyl dust</label><input type="range" id="dust" min="0" max="1" step="0.01" /><output id="dustOut"></output></div>
+          <div class="row">
+            <label>Spot varnish</label>
+            <div class="seg" id="varnishOn"><button data-v="on">On</button><button data-v="off">Off</button></div>
+          </div>
+          <div id="varnishRows">
+            <div class="row"><label>Reflector</label><input type="range" id="glint" min="0" max="1" step="0.01" /><output id="glintOut"></output></div>
+            <p class="hint">A soft light at the camera's mirror angle so the glossy varnish catches it. Orbit to see it come and go.</p>
+          </div>
+          <p class="hint" id="varnishNone">Drop a varnish mask in the Artwork slots (any colour on transparent = varnish).</p>
+        </details>
       </section>
 
       <section>
         <h2>Artwork</h2>
         <p class="hint">Click or drop an image on a slot to replace it.</p>
         <div class="slots" id="slots"></div>
+        <details class="adv" data-k="artwork">
+          <summary>Insert &amp; varnish</summary>
+          <div class="slots" id="slotsMore"></div>
+        </details>
       </section>
     </aside>
 
@@ -122,21 +139,24 @@
       <section>
         <h2>Camera</h2>
         <div class="chips" id="camPresets"></div>
-        <div class="row"><label>Angle</label><input type="range" id="az" min="-180" max="180" step="0.5" /><output id="azOut"></output></div>
-        <div class="row"><label>Tilt</label><input type="range" id="el" min="-80" max="89.5" step="0.5" /><output id="elOut"></output></div>
-        <div class="row"><label>Lens</label><input type="range" id="lens" min="24" max="160" step="1" /><output id="lensOut"></output></div>
-        <div class="row"><label>Zoom</label><input type="range" id="zoom" min="0.5" max="2.5" step="0.01" /><output id="zoomOut"></output></div>
+        <details class="adv" data-k="camera">
+          <summary>Advanced</summary>
+          <div class="row"><label>Angle</label><input type="range" id="az" min="-180" max="180" step="0.5" /><output id="azOut"></output></div>
+          <div class="row"><label>Tilt</label><input type="range" id="el" min="-80" max="89.5" step="0.5" /><output id="elOut"></output></div>
+          <div class="row"><label>Lens</label><input type="range" id="lens" min="24" max="160" step="1" /><output id="lensOut"></output></div>
+          <div class="row"><label>Zoom</label><input type="range" id="zoom" min="0.5" max="2.5" step="0.01" /><output id="zoomOut"></output></div>
+        </details>
       </section>
 
       <section>
         <h2>Light</h2>
         <div class="chips" id="lightPresets"></div>
-        <div class="row"><label>Direction</label><input type="range" id="laz" min="0" max="360" step="1" /><output id="lazOut"></output></div>
-        <div class="row"><label>Softness</label><input type="range" id="soft" min="0" max="1" step="0.01" /><output id="softOut"></output></div>
-        <div class="row"><label>Shadows</label><input type="range" id="master" min="0" max="1" step="0.01" /><output id="masterOut"></output></div>
         <div class="row"><label>Brightness</label><input type="range" id="exposure" min="0.5" max="1.6" step="0.01" /><output id="exposureOut"></output></div>
-        <details class="adv">
+        <details class="adv" data-k="light">
           <summary>Advanced</summary>
+          <div class="row"><label>Direction</label><input type="range" id="laz" min="0" max="360" step="1" /><output id="lazOut"></output></div>
+          <div class="row"><label>Softness</label><input type="range" id="soft" min="0" max="1" step="0.01" /><output id="softOut"></output></div>
+          <div class="row"><label>Shadows</label><input type="range" id="master" min="0" max="1" step="0.01" /><output id="masterOut"></output></div>
           <div class="row"><label>Light height</label><input type="range" id="lel" min="8" max="88" step="1" /><output id="lelOut"></output></div>
           <div class="row"><label>Cast shadow</label><input type="range" id="shadow" min="0" max="0.8" step="0.01" /><output id="shadowOut"></output></div>
           <div class="row"><label>Ambient occl.</label><input type="range" id="ambient" min="0" max="1" step="0.01" /><output id="ambientOut"></output></div>
@@ -149,14 +169,15 @@
 
       <section>
         <h2>Photo</h2>
-        <div class="row">
-          <label>Depth of field</label>
-          <div class="seg" id="dof"><button data-v="0">Off</button><button data-v="11">f/11</button><button data-v="5.6">f/5.6</button><button data-v="2.8">f/2.8</button><button data-v="1.4">f/1.4</button></div>
-        </div>
-        <div class="row"><label>Grain</label><input type="range" id="grain" min="0" max="1" step="0.01" /><output id="grainOut"></output></div>
-        <div class="row"><label>Vignette</label><input type="range" id="vignette" min="0" max="1" step="0.01" /><output id="vignetteOut"></output></div>
-        <details class="adv">
-          <summary>Lens &amp; film</summary>
+        <div class="chips" id="photoPresets"></div>
+        <details class="adv" data-k="photo">
+          <summary>Advanced</summary>
+          <div class="row">
+            <label>Depth of field</label>
+            <div class="seg" id="dof"><button data-v="0">Off</button><button data-v="11">f/11</button><button data-v="5.6">f/5.6</button><button data-v="2.8">f/2.8</button><button data-v="1.4">f/1.4</button></div>
+          </div>
+          <div class="row"><label>Grain</label><input type="range" id="grain" min="0" max="1" step="0.01" /><output id="grainOut"></output></div>
+          <div class="row"><label>Vignette</label><input type="range" id="vignette" min="0" max="1" step="0.01" /><output id="vignetteOut"></output></div>
           <div class="row"><label>Halation</label><input type="range" id="bloom" min="0" max="1" step="0.01" /><output id="bloomOut"></output></div>
           <div class="row"><label>Aberration</label><input type="range" id="ca" min="0" max="1" step="0.01" /><output id="caOut"></output></div>
           <div class="row"><label>Film look</label><input type="range" id="look" min="0" max="1" step="0.01" /><output id="lookOut"></output></div>
@@ -166,17 +187,16 @@
       <section>
         <h2>Background</h2>
         <div class="bgs" id="bgs"></div>
-        <div class="row">
-          <label>Custom</label>
-          <input type="color" id="bgColor" />
-          <label class="check"><input type="checkbox" id="bgTransparent" /> Transparent</label>
-        </div>
         <div class="row" id="bgMediaRow">
           <label>Image / video</label>
           <button class="ghost" id="bgPick">Choose file…</button>
           <button class="ghost" id="bgClear" title="Remove the background image / video" hidden>×</button>
         </div>
         <p class="hint" id="bgHint">Drop a photo or a video here to use it as the backdrop. Shadows fall onto it.</p>
+        <details class="adv" data-k="background">
+          <summary>Custom colour</summary>
+          <div class="row"><label>Colour</label><input type="color" id="bgColor" /></div>
+        </details>
       </section>
 
       <section>
@@ -200,12 +220,15 @@
           </div>
         </div>
         <p class="hint" id="motionHint"></p>
-        <div class="row"><label>Duration</label><input type="range" id="vidDur" min="2" max="15" step="0.1" /><output id="vidDurOut"></output></div>
-        <div class="row" id="vidTurnsRow"><label>Turns / loop</label><input type="range" id="vidTurns" min="1" max="6" step="1" /><output id="vidTurnsOut"></output></div>
-        <div class="row">
-          <label>Frame rate</label>
-          <div class="seg" id="vidFps"><button data-v="30">30</button><button data-v="60">60</button></div>
-        </div>
+        <details class="adv" data-k="video">
+          <summary>Advanced</summary>
+          <div class="row"><label>Duration</label><input type="range" id="vidDur" min="2" max="15" step="0.1" /><output id="vidDurOut"></output></div>
+          <div class="row" id="vidTurnsRow"><label>Turns / loop</label><input type="range" id="vidTurns" min="1" max="6" step="1" /><output id="vidTurnsOut"></output></div>
+          <div class="row">
+            <label>Frame rate</label>
+            <div class="seg" id="vidFps"><button data-v="30">30</button><button data-v="60">60</button></div>
+          </div>
+        </details>
         <button class="ghost wide" id="previewLoop">▶ Preview loop</button>
         <button class="primary" id="exportMp4">Render MP4</button>
         <p class="hint" id="vidHint"></p>

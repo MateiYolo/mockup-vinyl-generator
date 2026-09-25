@@ -153,3 +153,5 @@ details.adv[open] summary::before { content: '▾ '; }
 .project:hover .del { display: block; }
 .project .del:hover { color: #fff; background: #333; }
 .proj-backup { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+.chips button.on { border-color: var(--accent); color: #fff; background: #221a17; }
+details.adv > .slots { margin-top: 6px; }

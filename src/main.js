@@ -206,13 +206,14 @@ stage.beforeRender = () => {
 const SLOTS = {
   coverFront: { name: 'Cover front', url: '/assets/cover-front.png' },
   coverBack: { name: 'Cover back', url: '/assets/cover-back.png' },
-  varnishFront: { name: 'Varnish front', url: '/assets/varnish-front.png', varnish: true },
-  varnishBack: { name: 'Varnish back', url: '/assets/varnish-back.png', varnish: true },
-  insertRecto: { name: 'Insert recto', url: '/assets/insert-recto.jpg' },
-  insertVerso: { name: 'Insert verso', url: '/assets/insert-verso.jpg' },
   labelA: { name: 'Label side A', url: '/assets/label-a.png', round: true },
   labelB: { name: 'Label side B', url: '/assets/label-b.png', round: true },
   vinylArt: { name: 'Vinyl artwork', url: '/assets/vinyl-marble.png', round: true },
+  // `more`: tucked under "Insert & varnish"
+  insertRecto: { name: 'Insert recto', url: '/assets/insert-recto.jpg', more: true },
+  insertVerso: { name: 'Insert verso', url: '/assets/insert-verso.jpg', more: true },
+  varnishFront: { name: 'Varnish front', url: '/assets/varnish-front.png', varnish: true, more: true },
+  varnishBack: { name: 'Varnish back', url: '/assets/varnish-back.png', varnish: true, more: true },
 };
 const images = {};
 const maxAniso = stage.renderer.capabilities.getMaxAnisotropy();
@@ -266,8 +267,8 @@ function applySlot(key) {
 }
 
 function buildSlots() {
-  const wrap = $('slots');
   for (const [k, s] of Object.entries(SLOTS)) {
+    const wrap = $(s.more ? 'slotsMore' : 'slots');
     const b = document.createElement('div');
     b.className = 'slot';
     b.dataset.k = k;
@@ -474,9 +475,41 @@ const LIGHT_PRESETS = {
   'Top light': { az: 200, el: 80, softness: 0.6, strength: 0.4, ambient: 0.65, contact: 0.4, falloff: 0.6, warmth: 0.5 },
   'Hard sun': { az: 250, el: 38, softness: 0.03, strength: 0.55, ambient: 0.35, contact: 0.25, falloff: 0, warmth: 0.68 },
 };
+// Photo looks: 'Photo' is the stage's default look
+const PHOTO_PRESETS = {
+  'Clean': { fstop: 0, grain: 0, vignette: 0, bloom: 0, ca: 0, look: 0 },
+  'Photo': { fstop: 5.6, grain: 0.35, vignette: 0.2, bloom: 0.35, ca: 0.3, look: 0.5 },
+  'Shallow': { fstop: 1.4, grain: 0.3, vignette: 0.3, bloom: 0.45, ca: 0.35, look: 0.5 },
+  'Film': { fstop: 2.8, grain: 0.7, vignette: 0.45, bloom: 0.6, ca: 0.5, look: 0.9 },
+};
+// sleeve wear / warp + vinyl dust together; 'Used' is the default
+const CONDITIONS = {
+  mint: { name: 'Mint', wear: 0.05, warp: 0.05, dust: 0.05 },
+  used: { name: 'Used', wear: 0.4, warp: 0.25, dust: 0.3 },
+  vintage: { name: 'Vintage', wear: 0.85, warp: 0.7, dust: 0.75 },
+};
 const BGS = ['#d8cec7', '#f3f0eb', '#bdb8b1', '#c9cfc2', '#2b2a29', '#111111'];
 
 let refreshCam = () => {};
+// highlight the preset that matches the current settings (none once a slider has moved away from it)
+const presetRefreshers = [];
+const refreshPresets = () => presetRefreshers.forEach((f) => f());
+const matches = (cur, p) => Object.entries(p).every(([k, v]) => typeof v !== 'number' || Math.abs(cur[k] - v) < 1e-3);
+function presetChips(id, presets, apply, current) {
+  const btns = Object.entries(presets).map(([name, p]) => {
+    const b = document.createElement('button');
+    b.textContent = name;
+    b.onclick = () => { apply(p); refreshPresets(); };
+    $(id).appendChild(b);
+    return [b, p];
+  });
+  presetRefreshers.push(() => btns.forEach(([b, p]) => b.classList.toggle('on', matches(current(), p))));
+}
+function applyCondition() {
+  sleeve.setWear(state.wear); insert.setWear(state.wear * 0.5);
+  sleeve.setWarp(state.warp); insert.setWarp(state.warp * 0.4);
+  vinyl.setDust(state.dust);
+}
 let refreshLight = () => {};
 let refreshBg = () => {};
 let refreshVidDur = () => {};
@@ -517,14 +550,8 @@ function buildControls() {
   stage.onViewChange = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(refreshCam); };
 
   // light
-  const lp = $('lightPresets');
-  for (const [name, p] of Object.entries(LIGHT_PRESETS)) {
-    const b = document.createElement('button');
-    b.textContent = name;
-    b.onclick = () => { stage.setLight(p); refreshLight(); };
-    lp.appendChild(b);
-  }
   const L = stage.light;
+  presetChips('lightPresets', LIGHT_PRESETS, (p) => { stage.setLight(p); refreshLight(); }, () => L);
   const rl = [
     slider('laz', () => L.az, (x) => stage.setLight({ az: x }), (x) => x + '°'),
     slider('lel', () => L.el, (x) => stage.setLight({ el: x }), (x) => x + '°'),
@@ -539,10 +566,11 @@ function buildControls() {
     slider('lift', () => state.lift, (x) => { state.lift = x; stage.setLift(x); applyLayout({ reframe: 'fit' }); }, (x) => x.toFixed(1) + 'cm'),
     slider('exposure', () => state.exposure, (x) => { state.exposure = x; stage.renderer.toneMappingExposure = x; }, (x) => (x > 1 ? '+' : '') + Math.round((x - 1) * 100)),
   ];
-  refreshLight = () => rl.forEach((f) => f());
+  refreshLight = () => { rl.forEach((f) => f()); refreshPresets(); };
 
   // photo look
   const P = stage.photo;
+  presetChips('photoPresets', PHOTO_PRESETS, (p) => { stage.setPhoto(p); refreshers.forEach((f) => f()); }, () => P);
   seg('dof', () => P.fstop, (v) => stage.setPhoto({ fstop: +v }));
   slider('grain', () => P.grain, (x) => stage.setPhoto({ grain: x }), (x) => Math.round(x * 100));
   slider('vignette', () => P.vignette, (x) => stage.setPhoto({ vignette: x }), (x) => Math.round(x * 100));
@@ -551,6 +579,16 @@ function buildControls() {
   slider('look', () => P.look, (x) => stage.setPhoto({ look: x }), (x) => Math.round(x * 100));
 
   // realism
+  const cw = $('condition');
+  for (const [k, c] of Object.entries(CONDITIONS)) cw.insertAdjacentHTML('beforeend', `<button data-v="${k}">${c.name}</button>`);
+  const refreshCondition = seg('condition', () => Object.keys(CONDITIONS).find((k) => matches(state, CONDITIONS[k])) || '', (k) => {
+    const { name, ...c } = CONDITIONS[k];
+    Object.assign(state, c);
+    applyCondition();
+    refreshers.forEach((f) => f());
+    applyLayout({ reframe: 'fit' }); // warp changes the stack height
+  });
+  presetRefreshers.push(refreshCondition);
   slider('wear', () => state.wear, (x) => { state.wear = x; clearTimeout(wearT); wearT = setTimeout(() => { sleeve.setWear(x); insert.setWear(x * 0.5); stage.invalidate(); }, 60); }, (x) => Math.round(x * 100));
   slider('warp', () => state.warp, (x) => { state.warp = x; sleeve.setWarp(x); insert.setWarp(x * 0.4); applyLayout({ reframe: 'fit' }); }, (x) => x.toFixed(2) + 'cm');
   slider('dust', () => state.dust, (x) => { state.dust = x; vinyl.setDust(x); stage.invalidate(); }, (x) => Math.round(x * 100));
@@ -573,7 +611,6 @@ function buildControls() {
   mb.onclick = () => setMode('media');
   bgw.appendChild(mb);
   $('bgColor').oninput = (e) => { state.bg = e.target.value; setMode('color'); };
-  $('bgTransparent').onchange = (e) => setMode(e.target.checked ? 'transparent' : 'color');
   $('bgPick').onclick = () => { $('bgFile').value = ''; $('bgFile').click(); };
   $('bgFile').onchange = (e) => { const f = e.target.files[0]; if (f) setBgFile(f); };
   $('bgClear').onclick = clearBgMedia;
@@ -586,7 +623,6 @@ function buildControls() {
     mb.hidden = !bgMedia;
     if (bgMedia) mb.style.backgroundImage = `url("${bgMedia.thumb}")`;
     $('bgColor').value = state.bg;
-    $('bgTransparent').checked = state.bgMode === 'transparent';
     $('bgClear').hidden = !bgMedia;
     $('bgPick').textContent = bgMedia ? 'Replace…' : 'Choose file…';
     const v = bgMedia?.el instanceof HTMLVideoElement ? bgMedia.el : null;
@@ -710,12 +746,11 @@ function applySettings(s) {
   sleeve.setEdge(state.edge);
   $('edgeColor').value = state.edge;
   sleeve.setVarnish({ on: state.varnish });
-  sleeve.setWear(state.wear); insert.setWear(state.wear * 0.5);
-  sleeve.setWarp(state.warp); insert.setWarp(state.warp * 0.4);
-  vinyl.setDust(state.dust);
+  applyCondition();
   refreshVarnishUI();
   applyVinyl(); renderSwatches(); renderVinylOpts();
   refreshers.forEach((f) => f());
+  refreshPresets();
   applyLayout({ reframe: 'fit' }); // warp changes the stack height
 }
 
@@ -1015,7 +1050,14 @@ function tick(now) {
 }
 
 // any UI interaction may change the scene -> restart progressive accumulation
-['input', 'change', 'click', 'drop'].forEach((ev) => window.addEventListener(ev, () => setTimeout(() => { stage.invalidate(); if (DEFAULTS) refreshDirty(); }), true));
+['input', 'change', 'click', 'drop'].forEach((ev) => window.addEventListener(ev, () => setTimeout(() => { stage.invalidate(); refreshPresets(); if (DEFAULTS) refreshDirty(); }), true));
+
+// "Advanced" folds remember whether they were left open (per browser)
+document.querySelectorAll('details.adv[data-k]').forEach((d) => {
+  const key = 'adv.' + d.dataset.k;
+  try { d.open = localStorage.getItem(key) === '1'; } catch { /* storage blocked */ }
+  d.ontoggle = () => { try { localStorage.setItem(key, d.open ? '1' : '0'); } catch { /* storage blocked */ } };
+});
 
 // ---------------------------------------------------------------- boot
 (async function boot() {
@@ -1032,14 +1074,13 @@ function tick(now) {
   refreshVarnishUI();
   applyVinyl();
   sleeve.setFinish(state.finish);
-  sleeve.setWarp(state.warp);
-  insert.setWarp(state.warp * 0.4);
-  vinyl.setDust(state.dust);
+  applyCondition();
   fitViewport();
   stage.setLight(LIGHT_PRESETS['Window']);
   applyLayout();
   refreshCam();
   refreshLight();
+  refreshPresets();
   DEFAULTS = settingsOf();
   markSaved();
   renderProjects();
