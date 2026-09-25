@@ -8,6 +8,7 @@ npm run dev   # http://localhost:5178
 ```
 
 - **Collection**: name a vinyl and **Save** (or ⌘S) to keep its artwork and vinyl / sleeve settings in the browser (IndexedDB). **+ New** starts a fresh one without touching the saved ones; click a saved vinyl to reopen it. Camera, light, background and export settings are not part of a vinyl, so the whole collection can be shot the same way. **↓ Backup** downloads the whole collection as one `.json` file and **↑ Import** loads it back (for example on another machine or after clearing the browser).
+- **Presets first**: camera, light, photo look (Clean / Photo / Shallow / Film) and condition (Mint / Used / Vintage: sleeve wear + warp and vinyl dust) are one click; the preset matching the current settings is highlighted. The fine sliders live under each section's **Advanced** fold, which remembers whether it was left open.
 - **Scene presets**: flat stack, sleeve + vinyl, standing, full bundle, vinyl only, vinyl hero, front cover, back cover, front + back, insert.
 - **Vinyl**: artwork texture (top-down PNG of the disc), black, white, clear, smoke, tinted, colour, procedural marble, splatter and split. Grooves and the anisotropic sheen are procedural.
 - **Artwork**: drop images on the slots. Defaults are in `public/assets/`.
