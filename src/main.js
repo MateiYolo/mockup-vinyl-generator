@@ -455,10 +455,10 @@ const CAM_PRESETS = {
   'Side': { az: -72, el: 26 },
 };
 const LIGHT_PRESETS = {
-  'Soft studio': { az: 225, el: 55, softness: 0.8, strength: 0.32, ambient: 0.6, contact: 0.35 },
-  'Window': { az: 245, el: 32, softness: 0.3, strength: 0.45, ambient: 0.5, contact: 0.3 },
-  'Top light': { az: 200, el: 80, softness: 0.6, strength: 0.4, ambient: 0.65, contact: 0.4 },
-  'Hard sun': { az: 250, el: 38, softness: 0.03, strength: 0.55, ambient: 0.35, contact: 0.25 },
+  'Soft studio': { az: 225, el: 55, softness: 0.8, strength: 0.32, ambient: 0.6, contact: 0.35, falloff: 0.55, warmth: 0.52 },
+  'Window': { az: 245, el: 32, softness: 0.3, strength: 0.45, ambient: 0.5, contact: 0.3, falloff: 0.45, warmth: 0.6 },
+  'Top light': { az: 200, el: 80, softness: 0.6, strength: 0.4, ambient: 0.65, contact: 0.4, falloff: 0.6, warmth: 0.5 },
+  'Hard sun': { az: 250, el: 38, softness: 0.03, strength: 0.55, ambient: 0.35, contact: 0.25, falloff: 0, warmth: 0.68 },
 };
 const BGS = ['#d8cec7', '#f3f0eb', '#bdb8b1', '#c9cfc2', '#2b2a29', '#111111'];
 
@@ -519,6 +519,9 @@ function buildControls() {
     slider('shadow', () => L.strength, (x) => stage.setLight({ strength: x }), (x) => Math.round(x * 100)),
     slider('ambient', () => L.ambient, (x) => stage.setLight({ ambient: x }), (x) => Math.round(x * 100)),
     slider('contact', () => L.contact, (x) => stage.setLight({ contact: x }), (x) => Math.round(x * 100)),
+    slider('falloff', () => L.falloff, (x) => stage.setLight({ falloff: x }), (x) => Math.round(x * 100)),
+    slider('bounce', () => L.bounce, (x) => stage.setLight({ bounce: x }), (x) => Math.round(x * 100)),
+    slider('warmth', () => L.warmth, (x) => stage.setLight({ warmth: x }), (x) => (x > 0.5 ? '+' : '') + Math.round((x - 0.5) * 200)),
     slider('lift', () => state.lift, (x) => { state.lift = x; stage.setLift(x); applyLayout({ reframe: 'fit' }); }, (x) => x.toFixed(1) + 'cm'),
     slider('exposure', () => state.exposure, (x) => { state.exposure = x; stage.renderer.toneMappingExposure = x; }, (x) => (x > 1 ? '+' : '') + Math.round((x - 1) * 100)),
   ];
@@ -529,6 +532,9 @@ function buildControls() {
   seg('dof', () => P.fstop, (v) => stage.setPhoto({ fstop: +v }));
   slider('grain', () => P.grain, (x) => stage.setPhoto({ grain: x }), (x) => Math.round(x * 100));
   slider('vignette', () => P.vignette, (x) => stage.setPhoto({ vignette: x }), (x) => Math.round(x * 100));
+  slider('bloom', () => P.bloom, (x) => stage.setPhoto({ bloom: x }), (x) => Math.round(x * 100));
+  slider('ca', () => P.ca, (x) => stage.setPhoto({ ca: x }), (x) => Math.round(x * 100));
+  slider('look', () => P.look, (x) => stage.setPhoto({ look: x }), (x) => Math.round(x * 100));
 
   // realism
   slider('wear', () => state.wear, (x) => { state.wear = x; clearTimeout(wearT); wearT = setTimeout(() => { sleeve.setWear(x); insert.setWear(x * 0.5); stage.invalidate(); }, 60); }, (x) => Math.round(x * 100));
