@@ -1,9 +1,11 @@
 import * as THREE from 'three';
-import { R, makeDustMap, makeLabelBump, makeBoardSurface, composeArtwork, makeVarnishMaps } from './textures.js';
+import { R, makeDustMap, makeLabelBump, makeBoardSurface, composeArtwork, makeVarnishMaps, makeShrinkWrapMaps, makeHoleMask } from './textures.js';
 
 export const SLEEVE = { w: 31.4, t: 0.35 };
 export const INSERT = { w: 30.5, t: 0.03 };
 export const VINYL = { r: R, half: 0.085, labelR: 5.0, hole: 0.36 };
+// die-cut sleeve: a 9.5 cm window onto the 10 cm label
+export const DIECUT = { r: 4.75 };
 
 // ---------- Vinyl ----------
 function discGeometry() {
@@ -58,13 +60,7 @@ export class Vinyl {
     this.disc.castShadow = this.disc.receiveShadow = true;
     this.spin.add(this.disc);
 
-    const labelGeo = new THREE.RingGeometry(VINYL.hole, VINYL.labelR, 128, 1);
-    const labelBump = makeLabelBump();
-    const labelMat = () => new THREE.MeshPhysicalMaterial({
-      roughness: 0.58, color: 0xffffff, bumpMap: labelBump, bumpScale: 0.6,
-      sheen: 0.3, sheenRoughness: 0.7, sheenColor: 0xffffff,
-      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -8,
-    });
+    const labelGeo = labelGeometry();
     this.labelA = new THREE.Mesh(labelGeo, labelMat());
     this.labelA.rotation.x = -Math.PI / 2;
     this.labelA.position.y = 0.082;
@@ -154,6 +150,17 @@ export class Vinyl {
     }
     m.needsUpdate = true;
   }
+}
+
+let labelGeo = null, labelBump = null;
+function labelGeometry() { return (labelGeo ||= new THREE.RingGeometry(VINYL.hole, VINYL.labelR, 128, 1)); }
+function labelMat() {
+  labelBump ||= makeLabelBump();
+  return new THREE.MeshPhysicalMaterial({
+    roughness: 0.58, color: 0xffffff, bumpMap: labelBump, bumpScale: 0.6,
+    sheen: 0.3, sheenRoughness: 0.7, sheenColor: 0xffffff,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -8,
+  });
 }
 
 // ---------- Sleeve & insert ----------
@@ -299,6 +306,10 @@ class Card {
       else { m.roughness = 0.82; m.clearcoat = 0; m.bumpScale = 0.5; m.sheen = 0.35; }
       m.clearcoatMap = null;
       m.clearcoatNormalMap = null;
+      // die-cut window (sleeve only): the board is cut away inside the circle
+      const hole = this.dieCut ? this.holeMask : null;
+      m.alphaMap = hole;
+      m.alphaTest = hole ? 0.5 : 0;
       m.bumpMap = m.roughnessMap = boardSurface;
       const v = this.varnish.maps[side];
       if (v && this.varnish.on && f !== 'gloss') {
@@ -316,8 +327,165 @@ class Card {
   }
 }
 
+// Shrink wrap and the die-cut window live as children of the board, so clones of the sleeve carry them too.
+const WRAP_GAP = 0.02; // film standing off the board (cm)
 export class Sleeve extends Card {
-  constructor(opts) { super(SLEEVE.w, SLEEVE.t, { radius: 0.1, ...opts }); }
+  constructor(opts) {
+    super(SLEEVE.w, SLEEVE.t, { radius: 0.1, ...opts });
+    this.shrink = 'off';
+    this.wrapMaps = {}; // per crease level, generated the first time it's picked
+    this.dieCut = false;
+
+    // shrink wrap: a thin clear film (transmissive, so its reflections stay at full strength) with creases & haze
+    this.wrapMat = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff, metalness: 0, roughness: 1, transmission: 1, thickness: 0, ior: 1.5,
+      // a physical 4% film mirrors the whole softbox as a flat grey veil over the artwork; toned down, the
+      // reflections read as streaks along the creases instead
+      specularIntensity: 0.5,
+    });
+    const wrap = new THREE.Mesh(this.geo.wrapFront, this.wrapMat);
+    wrap.name = 'wrap';
+    wrap.receiveShadow = true; // a clear film casts (almost) no shadow
+    wrap.visible = false;
+    this.mesh.add(wrap);
+
+    // die-cut window: the cut wall of the board, and the record inside it (seen through the hole)
+    const hole = new THREE.Group();
+    hole.name = 'hole';
+    hole.visible = false;
+    const wall = new THREE.Mesh(
+      new THREE.CylinderGeometry(DIECUT.r, DIECUT.r, SLEEVE.t, 128, 1, true).rotateX(Math.PI / 2),
+      new THREE.MeshStandardMaterial({ color: 0xe6e1d8, roughness: 0.92, side: THREE.BackSide }),
+    );
+    wall.receiveShadow = true;
+    hole.add(wall);
+    const inner = new THREE.Group();
+    inner.name = 'record';
+    this.labelA = new THREE.Mesh(labelGeometry(), labelMat());
+    this.labelA.position.z = VINYL.half;
+    this.labelB = new THREE.Mesh(labelGeometry(), labelMat());
+    this.labelB.rotation.y = Math.PI;
+    this.labelB.position.z = -VINYL.half;
+    for (const l of [this.labelA, this.labelB]) {
+      l.castShadow = l.receiveShadow = true; // no light leaking through the hole
+      l.material.polygonOffset = false; // sits well below the board: an offset would pull it through the face
+    }
+    inner.add(this.labelA, this.labelB);
+    hole.add(inner);
+    // when the real vinyl sits in this sleeve, the patch of it seen through the window (the vinyl itself is clipped
+    // away inside the sleeve so it can't poke through a warped board)
+    this.discMat = new THREE.MeshPhysicalMaterial();
+    const patch = new THREE.Mesh(new THREE.BufferGeometry(), this.discMat);
+    patch.name = 'patch';
+    patch.receiveShadow = true;
+    patch.visible = false;
+    hole.add(patch);
+    this.mesh.add(hole);
+  }
+  buildGeometry() {
+    super.buildGeometry();
+    const r = this.opts.radius + WRAP_GAP, w = this.w + 2 * WRAP_GAP, t = this.t + 2 * WRAP_GAP;
+    this.geo.wrapFront = boardGeometry(w, t, r, this.warp, 1);
+    this.geo.wrapBack = boardGeometry(w, t, r, this.warp, -1);
+  }
+  orient(mesh, faceUp) {
+    super.orient(mesh, faceUp);
+    const wrap = mesh.getObjectByName('wrap');
+    if (wrap) wrap.geometry = faceUp === 'back' ? this.geo.wrapBack : this.geo.wrapFront;
+  }
+  get meshes() { return [this.mesh, ...this.clones]; }
+  // level: 'off' | 'light' | 'heavy' (how much the film is creased)
+  setShrink(level) {
+    this.shrink = level;
+    const on = level !== 'off', m = this.wrapMat;
+    if (on) {
+      this.wrapMaps[level] ||= makeShrinkWrapMaps(level);
+      const wm = this.wrapMaps[level];
+      Object.assign(m, { normalMap: wm.normal, roughnessMap: wm.surface, transmissionMap: wm.surface });
+      m.needsUpdate = true;
+    }
+    this.meshes.forEach((o) => (o.getObjectByName('wrap').visible = on));
+  }
+  setDieCut(on) {
+    this.dieCut = on;
+    this.holeMask ||= makeHoleMask(DIECUT.r / this.w);
+    this.meshes.forEach((m) => (m.getObjectByName('hole').visible = on));
+    this.applySurface();
+  }
+  syncDiscMaterial(vinylMat) {
+    this.discMat.copy(vinylMat);
+    this.discMat.clippingPlanes = null;
+    this.discMat.needsUpdate = true;
+  }
+  // What the die-cut window shows: a record centred in the sleeve, or (vinyl = the Vinyl sliding out of this
+  // sleeve) that very record, wherever it is and however it's spun or flipped.
+  syncRecord(mesh, vinyl = null) {
+    const rec = mesh.getObjectByName('record'), patch = mesh.getObjectByName('patch');
+    rec.position.set(0, 0, 0);
+    rec.quaternion.identity();
+    rec.visible = true;
+    patch.visible = false;
+    if (!this.dieCut || !vinyl) return;
+    mesh.updateWorldMatrix(true, false);
+    vinyl.labelA.updateWorldMatrix(true, false);
+    const toLocal = mesh.matrixWorld.clone().invert();
+    const m = toLocal.clone().multiply(vinyl.labelA.matrixWorld);
+    const pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+    m.decompose(pos, q, sc);
+    rec.position.set(pos.x, pos.y, 0);
+    rec.quaternion.copy(q);
+    const d = Math.hypot(pos.x, pos.y);
+    // only whole labels: one that reaches the opening is out of reach of the window anyway
+    rec.visible = d + VINYL.labelR < this.w / 2 - 0.05;
+    // the part of the disc inside the window: hole circle ∩ disc circle, minus the spindle hole
+    const r1 = DIECUT.r + 0.02, pts = [];
+    for (let i = 0; i < 128; i++) {
+      const a = (i / 128) * Math.PI * 2, x = Math.cos(a) * r1, y = Math.sin(a) * r1;
+      if (Math.hypot(x - pos.x, y - pos.y) <= R) pts.push(new THREE.Vector2(x, y));
+    }
+    for (let i = 0; i < 256; i++) {
+      const a = (i / 256) * Math.PI * 2, x = pos.x + Math.cos(a) * R, y = pos.y + Math.sin(a) * R;
+      if (Math.hypot(x, y) < r1) pts.push(new THREE.Vector2(x, y));
+    }
+    if (pts.length < 3) return;
+    const c = pts.reduce((a, p) => a.add(p), new THREE.Vector2()).divideScalar(pts.length);
+    pts.sort((a, b) => Math.atan2(a.y - c.y, a.x - c.x) - Math.atan2(b.y - c.y, b.x - c.x));
+    const shape = new THREE.Shape(pts);
+    if (d + VINYL.hole < r1) shape.holes.push(new THREE.Path().absarc(pos.x, pos.y, VINYL.hole, 0, Math.PI * 2, true));
+    const flat = new THREE.ShapeGeometry(shape, 8);
+    const fp = flat.attributes.position, idx = flat.index.array;
+    // both faces (front at +z, back at -z, facing out), UVs = the disc's own planar UVs at that point
+    vinyl.disc.updateWorldMatrix(true, false);
+    const toDisc = vinyl.disc.matrixWorld.clone().invert().multiply(mesh.matrixWorld);
+    const zf = 0.066, P = [], N = [], U = [], I = [], v = new THREE.Vector3();
+    for (const side of [1, -1]) {
+      const base = P.length / 3;
+      for (let i = 0; i < fp.count; i++) {
+        v.set(fp.getX(i), fp.getY(i), side * zf);
+        P.push(v.x, v.y, v.z);
+        N.push(0, 0, side);
+        v.applyMatrix4(toDisc);
+        U.push(v.x / (2 * R) + 0.5, 0.5 - v.z / (2 * R));
+      }
+      for (let i = 0; i < idx.length; i += 3) {
+        if (side > 0) I.push(base + idx[i], base + idx[i + 1], base + idx[i + 2]);
+        else I.push(base + idx[i], base + idx[i + 2], base + idx[i + 1]);
+      }
+    }
+    flat.dispose();
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2));
+    g.setIndex(I);
+    patch.geometry.dispose();
+    patch.geometry = g;
+    patch.visible = true;
+  }
+  setLabels(texA, texB) {
+    this.labelA.material.map = texA; this.labelA.material.needsUpdate = true;
+    this.labelB.material.map = texB; this.labelB.material.needsUpdate = true;
+  }
 }
 export class Insert extends Card {
   constructor(opts) { super(INSERT.w, INSERT.t, { radius: 0.012, ...opts }); }

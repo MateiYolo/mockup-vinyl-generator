@@ -74,6 +74,14 @@
           </div>
         </div>
         <div class="row">
+          <label>Shrink wrap</label>
+          <div class="seg" id="shrink"><button data-v="off">Off</button><button data-v="light" title="Snug film, a few small folds along the edges">Light</button><button data-v="heavy" title="Loose film, creased well into the face">Heavy</button></div>
+        </div>
+        <div class="row">
+          <label>Die-cut hole</label>
+          <div class="seg" id="dieCut"><button data-v="off">Off</button><button data-v="on">On</button></div>
+        </div>
+        <div class="row">
           <label>Condition</label>
           <div class="seg" id="condition"></div>
         </div>
@@ -92,7 +100,7 @@
           </div>
           <div id="varnishRows">
             <div class="row"><label>Reflector</label><input type="range" id="glint" min="0" max="1" step="0.01" /><output id="glintOut"></output></div>
-            <p class="hint">A soft light at the camera's mirror angle so the glossy varnish catches it. Orbit to see it come and go.</p>
+            <p class="hint">A soft light at the camera's mirror angle so the glossy varnish and the shrink wrap catch it. Orbit to see it come and go.</p>
           </div>
           <p class="hint" id="varnishNone">Drop a varnish mask in the Artwork slots (any colour on transparent = varnish).</p>
         </details>
@@ -161,6 +169,7 @@
           <summary>Advanced</summary>
           <div class="row"><label>Direction</label><input type="range" id="laz" min="0" max="360" step="1" /><output id="lazOut"></output></div>
           <div class="row"><label>Softness</label><input type="range" id="soft" min="0" max="1" step="0.01" /><output id="softOut"></output></div>
+          <div class="row"><label>Contrast</label><input type="range" id="contrast" min="0" max="1" step="0.01" /><output id="contrastOut"></output></div>
           <div class="row"><label>Shadows</label><input type="range" id="master" min="0" max="1" step="0.01" /><output id="masterOut"></output></div>
           <div class="row"><label>Light height</label><input type="range" id="lel" min="8" max="88" step="1" /><output id="lelOut"></output></div>
           <div class="row"><label>Cast shadow</label><input type="range" id="shadow" min="0" max="0.8" step="0.01" /><output id="shadowOut"></output></div>

@@ -17,6 +17,8 @@ const state = {
   vinyl: 'artwork',
   vinylColors: {},
   finish: 'matte',
+  shrink: 'off', // cellophane shrink wrap around the sleeve: 'off' | 'light' | 'heavy'
+  dieCut: false, // round window in the sleeve showing the label
   edge: '#f2f0ec',
   bg: '#d8cec7',
   bgMode: 'color', // 'color' | 'transparent' | 'media'
@@ -164,13 +166,14 @@ function applyLayout({ reframe = true } = {}) {
   // from the scene root: the pivot (stage.turn) may have moved since the last render, and a stale parent matrix
   // would shift every measured point (-> off-centre framing while dragging a slider or switching scenes quickly)
   stage.scene.updateMatrixWorld(true);
+  syncDieCut();
   const box = new THREE.Box3();
   const pts = [];
   stage.root.children.forEach((o) => {
     if (!o.visible) return;
     box.expandByObject(o, true); // exact: a spun record's rotated bounding box would be ~20% too big
-    o.traverse((m) => {
-      if (!m.isMesh) return;
+    o.traverseVisible((m) => {
+      if (!m.isMesh || !m.geometry.attributes.position) return;
       const pos = m.geometry.attributes.position;
       const step = Math.max(1, Math.floor(pos.count / 400));
       for (let i = 0; i < pos.count; i += step) pts.push(new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld));
@@ -200,7 +203,17 @@ stage.beforeRender = () => {
   if (!vinyl.material.clippingPlanes) return;
   stage.scene.updateMatrixWorld();
   sleeveClip.copy(localOpening).applyMatrix4(sleeve.mesh.matrixWorld);
+  // a loop spins the record: keep what the die-cut window shows in step
+  const spin = vinyl.spin.rotation.y;
+  if (state.dieCut && spin !== syncedSpin) { syncedSpin = spin; sleeve.syncRecord(sleeve.mesh, vinyl); }
 };
+let syncedSpin = 0;
+// die-cut window: the vinyl itself shows through when it sits in this sleeve, otherwise a record inside does
+function syncDieCut() {
+  if (!state.dieCut) return;
+  sleeve.syncDiscMaterial(vinyl.material);
+  for (const o of [sleeve.mesh, sleeve2]) sleeve.syncRecord(o, o.userData.clipsVinyl ? vinyl : null);
+}
 
 // ---------------------------------------------------------------- artwork
 const SLOTS = {
@@ -253,6 +266,7 @@ function applySlot(key) {
     case 'labelB':
       vinyl.labelA.material.map?.dispose(); vinyl.labelB.material.map?.dispose();
       vinyl.setLabels(images.labelA && tex(images.labelA), images.labelB && tex(images.labelB));
+      sleeve.setLabels(vinyl.labelA.material.map, vinyl.labelB.material.map);
       break;
     case 'vinylArt':
       vinylArtTex?.dispose();
@@ -302,11 +316,12 @@ function clearSlot(k) {
   stage.invalidate();
   refreshDirty();
 }
+// the reflector serves the glossy spot varnish and the shrink wrap (the film's creases only show in a reflection)
 function refreshVarnishUI() {
   const has = !!(images.varnishFront || images.varnishBack);
-  $('varnishRows').style.display = has ? '' : 'none';
+  $('varnishRows').style.display = has || state.shrink !== 'off' ? '' : 'none';
   $('varnishNone').style.display = has ? 'none' : '';
-  stage.setGlint(has && state.varnish ? state.glint : 0);
+  stage.setGlint((has && state.varnish) || state.shrink !== 'off' ? state.glint : 0);
 }
 let pickKey = null;
 function pickFile(k) { pickKey = k; $('filePick').value = ''; $('filePick').click(); }
@@ -375,6 +390,7 @@ function applyVinyl() {
     mode: v.mode === 'clear' ? 'clear' : map ? 'texture' : 'solid',
     color: c[0], tint: c[0], map,
   });
+  syncDieCut();
   stage.invalidate();
 }
 
@@ -469,11 +485,17 @@ const CAM_PRESETS = {
   'Low': { az: -30, el: 14 },
   'Side': { az: -72, el: 26 },
 };
+// Each preset is a different kind of light, not a variation of one: they differ in direction, size, contrast
+// (key vs sky) and falloff together.
 const LIGHT_PRESETS = {
-  'Soft studio': { az: 225, el: 55, softness: 0.8, strength: 0.32, ambient: 0.6, contact: 0.35, falloff: 0.55, warmth: 0.52 },
-  'Window': { az: 245, el: 32, softness: 0.3, strength: 0.45, ambient: 0.5, contact: 0.3, falloff: 0.45, warmth: 0.6 },
-  'Top light': { az: 200, el: 80, softness: 0.6, strength: 0.4, ambient: 0.65, contact: 0.4, falloff: 0.6, warmth: 0.5 },
-  'Hard sun': { az: 250, el: 38, softness: 0.03, strength: 0.55, ambient: 0.35, contact: 0.25, falloff: 0, warmth: 0.68 },
+  // big overhead diffuser: even, nearly shadowless, low contrast
+  'Soft': { az: 215, el: 68, softness: 1, strength: 0.2, ambient: 0.45, contact: 0.45, falloff: 0.1, warmth: 0.5, contrast: 0.05 },
+  // low side light: long soft shadows and a visible fall-off across the set
+  'Window': { az: 262, el: 24, softness: 0.4, strength: 0.5, ambient: 0.45, contact: 0.3, falloff: 0.9, warmth: 0.58, contrast: 0.55 },
+  // point source: crisp shadows, deep contrast, warm
+  'Hard sun': { az: 238, el: 40, softness: 0, strength: 0.75, ambient: 0.3, contact: 0.2, falloff: 0, warmth: 0.64, contrast: 0.75 },
+  // key behind the set: glowing edges, shadows falling towards the camera
+  'Backlit': { az: 172, el: 30, softness: 0.3, strength: 0.5, ambient: 0.4, contact: 0.35, falloff: 0.7, warmth: 0.62, contrast: 0.6 },
 };
 // Photo looks: 'Photo' is the stage's default look
 const PHOTO_PRESETS = {
@@ -517,9 +539,11 @@ let refreshVidDur = () => {};
 function buildControls() {
   // scene
   const refreshSlide = slider('slide', () => state.slide, (v) => { state.slide = v; applyLayout({ reframe: 'fit' }); }, (v) => Math.round(v * 100) + '%');
-  seg('side', () => state.side, (v) => { state.side = v; vinyl.setSide(v); });
+  seg('side', () => state.side, (v) => { state.side = v; vinyl.setSide(v); syncDieCut(); });
   seg('finish', () => state.finish, (v) => { state.finish = v; sleeve.setFinish(v); insert.setFinish(v === 'gloss' ? 'satin' : 'matte'); });
   $('edgeColor').oninput = (e) => { state.edge = e.target.value; sleeve.setEdge(state.edge); };
+  seg('shrink', () => state.shrink, (v) => { state.shrink = v; sleeve.setShrink(v); refreshVarnishUI(); });
+  seg('dieCut', () => (state.dieCut ? 'on' : 'off'), (v) => { state.dieCut = v === 'on'; sleeve.setDieCut(state.dieCut); syncDieCut(); });
   seg('varnishOn', () => (state.varnish ? 'on' : 'off'), (v) => { state.varnish = v === 'on'; sleeve.setVarnish({ on: state.varnish }); refreshVarnishUI(); });
   slider('glint', () => state.glint, (x) => { state.glint = x; refreshVarnishUI(); }, (x) => Math.round(x * 100));
   seg('frame', () => state.frame, (v) => {
@@ -556,6 +580,7 @@ function buildControls() {
     slider('laz', () => L.az, (x) => stage.setLight({ az: x }), (x) => x + '°'),
     slider('lel', () => L.el, (x) => stage.setLight({ el: x }), (x) => x + '°'),
     slider('soft', () => L.softness, (x) => stage.setLight({ softness: x }), (x) => Math.round(x * 100)),
+    slider('contrast', () => L.contrast, (x) => stage.setLight({ contrast: x }), (x) => Math.round(x * 100)),
     slider('master', () => L.master, (x) => stage.setLight({ master: x }), (x) => Math.round(x * 100)),
     slider('shadow', () => L.strength, (x) => stage.setLight({ strength: x }), (x) => Math.round(x * 100)),
     slider('ambient', () => L.ambient, (x) => stage.setLight({ ambient: x }), (x) => Math.round(x * 100)),
@@ -730,7 +755,7 @@ function clearBgMedia() {
 // ---------------------------------------------------------------- collection (saved vinyls)
 // A project is one release: the artwork slots + the vinyl & sleeve settings. The studio (scene, camera, light,
 // background, export) is left alone when switching, so the whole collection can be shot the same way.
-const PROJECT_KEYS = ['vinyl', 'vinylColors', 'finish', 'edge', 'varnish', 'glint', 'wear', 'warp', 'dust'];
+const PROJECT_KEYS = ['vinyl', 'vinylColors', 'finish', 'shrink', 'dieCut', 'edge', 'varnish', 'glint', 'wear', 'warp', 'dust'];
 let DEFAULTS; // settings at boot, for "+ New"
 let project = { id: null, name: '' };
 let savedSnap = '';
@@ -740,14 +765,18 @@ const settingsOf = () => structuredClone({ ...Object.fromEntries(PROJECT_KEYS.ma
 const snapshot = () => JSON.stringify([settingsOf(), Object.keys(SLOTS).map((k) => images[k]?.src || '')]);
 
 function applySettings(s) {
-  for (const k of PROJECT_KEYS) if (s[k] !== undefined) state[k] = structuredClone(s[k]);
+  // a vinyl saved before a setting existed gets its default
+  for (const k of PROJECT_KEYS) state[k] = structuredClone(s[k] ?? DEFAULTS[k]);
   // a vinyl saved before a finish was added lacks its colours (or names a finish that no longer exists)
   state.vinylColors = { ...structuredClone(DEFAULTS.vinylColors), ...state.vinylColors };
   if (!VINYLS[state.vinyl]) state.vinyl = DEFAULTS.vinyl;
+  if (!['off', 'light', 'heavy'].includes(state.shrink)) state.shrink = DEFAULTS.shrink;
   Object.assign(seeds, s.seeds);
   if (s.splitAngle !== undefined) splitAngle = s.splitAngle;
   sleeve.setFinish(state.finish);
   insert.setFinish(state.finish === 'gloss' ? 'satin' : 'matte');
+  sleeve.setShrink(state.shrink);
+  sleeve.setDieCut(state.dieCut);
   sleeve.setEdge(state.edge);
   $('edgeColor').value = state.edge;
   sleeve.setVarnish({ on: state.varnish });
@@ -1091,5 +1120,5 @@ document.querySelectorAll('details.adv[data-k]').forEach((d) => {
   markSaved();
   renderProjects();
   requestAnimationFrame(tick);
-  window.__app = { state, stage, vinyl, applyLayout, LAYOUTS, exportPng, exportMp4 };
+  window.__app = { state, stage, vinyl, sleeve, applyLayout, LAYOUTS, exportPng, exportMp4 };
 })();
