@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { R, makeDustMap, makeLabelBump, makeBoardSurface, composeArtwork, makeVarnishMaps, makeShrinkWrapMaps, makeHoleMask } from './textures.js';
+import { TEX } from './device.js';
 
 export const SLEEVE = { w: 31.4, t: 0.35 };
 export const INSERT = { w: 30.5, t: 0.03 };
@@ -262,7 +263,7 @@ class Card {
     meshes.forEach((m, i) => this.orient(m, faces[i]));
   }
   makeTex(img, seed, varnish) {
-    const t = new THREE.CanvasTexture(composeArtwork(img, this.wear, seed, 2048, varnish));
+    const t = new THREE.CanvasTexture(composeArtwork(img, this.wear, seed, TEX.art, varnish));
     t.colorSpace = THREE.SRGBColorSpace;
     t.anisotropy = this.opts.maxAniso;
     return t;
@@ -288,7 +289,7 @@ class Card {
   setVarnishMask(side, img) {
     const old = this.varnish.maps[side];
     old && [old.mask, old.normal, old.surface].forEach((t) => t && t.dispose());
-    this.varnish.maps[side] = img ? makeVarnishMaps(img, 2048, boardSurface.image) : null;
+    this.varnish.maps[side] = img ? makeVarnishMaps(img, TEX.art, boardSurface.image) : null;
     if (this.images[side]) this.setArt(side, this.images[side]);
     this.applySurface();
   }

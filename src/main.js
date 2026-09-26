@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Stage } from './stage.js';
+import { TEX } from './device.js';
 import { Vinyl, Sleeve, Insert, SLEEVE, INSERT, VINYL } from './objects.js';
 import { makeGrooveMaps, makeMarble, makeSplatter, makeSplit, discTextureFromImage, borderColor } from './textures.js';
 import { renderLoop, beginMotion, applyMotion, endMotion, MOTIONS } from './video.js';
@@ -37,6 +38,12 @@ let bgMedia = null; // { el, w, h, name } photo or video backdrop
 
 // ---------------------------------------------------------------- scene objects
 const stage = new Stage($('c'));
+// the GPU dropped the context (usually out of memory): say so instead of leaving a frozen / blank preview
+$('c').addEventListener('webglcontextlost', (e) => {
+  e.preventDefault();
+  rendering = true; // stop the render loop
+  busy(true, 'The graphics memory ran out. Save your vinyl, then reload the page.', 0);
+});
 const grooves = makeGrooveMaps();
 const cardOpts = { maxAniso: stage.renderer.capabilities.getMaxAnisotropy() };
 const vinyl = new Vinyl(grooves);
@@ -661,6 +668,9 @@ function buildControls() {
 
   // export
   seg('imgSize', () => state.imgSize, (v) => { state.imgSize = +v; updatePngHint(); });
+  $('imgSize').querySelectorAll('button').forEach((b) => {
+    if (+b.dataset.v > TEX.exportMax) { b.disabled = true; b.title = 'Too big for this device\'s memory'; }
+  });
   $('exportPng').onclick = exportPng;
   // any change to the loop settings restarts a running preview so it always shows what will be exported
   const vidSet = (k, v) => { state.vid[k] = v; if (preview) { stopPreview(); startPreview(); } refreshVidUI(); };
@@ -1001,6 +1011,7 @@ function tickPreview(now) {
 
 // ---------------------------------------------------------------- export
 function exportDims(frame, long) {
+  long = Math.min(long, TEX.exportMax); // a 4K render needs ~500 MB of float buffers: more than a phone allows
   const a = aspectOf(frame);
   return a >= 1 ? [long, Math.round(long / a)] : [Math.round(long * a), long];
 }

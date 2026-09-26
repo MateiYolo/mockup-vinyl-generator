@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { HorizontalBlurShader } from 'three/addons/shaders/HorizontalBlurShader.js';
 import { VerticalBlurShader } from 'three/addons/shaders/VerticalBlurShader.js';
 import { makeBackdropMaps } from './textures.js';
+import { TEX } from './device.js';
 
 const DEG = Math.PI / 180;
 // sky samples live between these heights (sin of elevation). Capped below the zenith: a light straight overhead
@@ -336,13 +337,13 @@ export class Stage {
     // key: a softbox at a finite distance, sampled over its surface -> soft shadows plus inverse-square falloff
     const key = (this.key = new THREE.SpotLight(0xffffff, 1, 0, 1.3, 0.75, 2));
     key.castShadow = true;
-    key.shadow.mapSize.set(4096, 4096);
+    key.shadow.mapSize.set(TEX.shadow, TEX.shadow);
     key.shadow.normalBias = 0.012;
     scene.add(key, key.target);
     // sky: directional samples over the dome -> ambient occlusion
     const sun = (this.sun = new THREE.DirectionalLight(0xffffff, 1));
     sun.castShadow = true;
-    sun.shadow.mapSize.set(4096, 4096);
+    sun.shadow.mapSize.set(TEX.shadow, TEX.shadow);
     sun.shadow.normalBias = 0.012;
     sun.target = key.target;
     sun.visible = false;

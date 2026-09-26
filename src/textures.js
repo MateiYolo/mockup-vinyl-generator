@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { TEX, freeCanvas } from './device.js';
 
 // Physical dimensions (cm). Disc textures map planar: canvas covers [-R, R] on both axes.
 export const R = 15.0;
@@ -51,7 +52,7 @@ function canvas(size) {
 
 // ---------- groove maps ----------
 // Returns { surface: R=bump, G=roughness ; aniso: RG=direction, B=strength }
-export function makeGrooveMaps(size = 4096) {
+export function makeGrooveMaps(size = TEX.grooves) {
   // 1D radial profile
   const N = 16384;
   const bump = new Float32Array(N), rough = new Float32Array(N), aniso = new Float32Array(N);
@@ -132,6 +133,7 @@ export function makeGrooveMaps(size = 4096) {
     wctx.stroke();
   }
   const wd = wctx.getImageData(0, 0, size, size).data;
+  freeCanvas(wear, lo);
 
   const sc = canvas(size);
   const sctx = sc.getContext('2d');
@@ -248,7 +250,7 @@ export function makeMarble({ c1, c2, c3, seed = 1, swirl = 1 }, size = 1024) {
   return toTexture(c);
 }
 
-export function makeSplatter({ c1, c2, c3, seed = 1 }, size = 2048) {
+export function makeSplatter({ c1, c2, c3, seed = 1 }, size = TEX.art) {
   const c = canvas(size);
   const ctx = c.getContext('2d');
   const rand = rng(seed * 31 + 7);
@@ -302,13 +304,14 @@ export function makeSplit({ c1, c2, angle = 0, blend = 0.02 }, size = 1024) {
 }
 
 // Crop an uploaded top-down disc image to its alpha bounds so the disc fills the texture.
-export function discTextureFromImage(image, size = 2048) {
+export function discTextureFromImage(image, size = TEX.art) {
   const w = image.naturalWidth || image.width, h = image.naturalHeight || image.height;
   const probe = document.createElement('canvas');
   probe.width = w; probe.height = h;
   const pctx = probe.getContext('2d', { willReadFrequently: true });
   pctx.drawImage(image, 0, 0);
   const data = pctx.getImageData(0, 0, w, h).data;
+  freeCanvas(probe);
   let minX = w, minY = h, maxX = 0, maxY = 0;
   for (let y = 0; y < h; y += 2) {
     for (let x = 0; x < w; x += 2) {
@@ -349,7 +352,7 @@ export function borderColor(image) {
 }
 
 // ---------- dust (alpha map, shared by both faces of the disc) ----------
-export function makeDustMap(size = 2048, seed = 3) {
+export function makeDustMap(size = TEX.art, seed = 3) {
   const c = canvas(size);
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#000';
@@ -407,7 +410,7 @@ export function makeLabelBump(size = 1024) {
 }
 
 // ---------- sleeve board surface: R = height (fibres, ring wear), G = roughness ----------
-export function makeBoardSurface(size = 2048, ringFrac = 15.05 / 31.4) {
+export function makeBoardSurface(size = TEX.art, ringFrac = 15.05 / 31.4) {
   const c = canvas(size);
   const ctx = c.getContext('2d');
   const img = ctx.createImageData(size, size);
@@ -457,7 +460,7 @@ function grime(size) {
   return grimeCanvas;
 }
 
-export function composeArtwork(image, wear = 0.4, seed = 1, size = 2048, varnishMask = null) {
+export function composeArtwork(image, wear = 0.4, seed = 1, size = TEX.art, varnishMask = null) {
   const c = canvas(size);
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#fff';
@@ -513,7 +516,7 @@ export function composeArtwork(image, wear = 0.4, seed = 1, size = 2048, varnish
 
 // ---------- spot varnish ----------
 // Any opaque, non-white pixel of the supplied file is varnish (the flat colour is just a marker).
-export function makeVarnishMaps(image, size = 2048, boardCanvas = null) {
+export function makeVarnishMaps(image, size = TEX.art, boardCanvas = null) {
   const c = canvas(size);
   const ctx = c.getContext('2d', { willReadFrequently: true });
   ctx.drawImage(image, 0, 0, size, size);
@@ -589,6 +592,7 @@ export function makeVarnishMaps(image, size = 2048, boardCanvas = null) {
   haloC.getContext('2d').putImageData(himg, 0, 0);
   t2.globalCompositeOperation = 'multiply';
   t2.drawImage(haloC, 0, 0);
+  freeCanvas(hC, inv, halo, haloC);
 
   // board surface with the varnish baked in: R = height (smooth raised plateau + bevel), G = roughness (glossy)
   let surface = null;
@@ -611,6 +615,7 @@ export function makeVarnishMaps(image, size = 2048, boardCanvas = null) {
     surface.anisotropy = 8;
   }
 
+  freeCanvas(c);
   const mk = (cv) => { const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.NoColorSpace; t.anisotropy = 8; return t; };
   return { mask: mk(maskC), normal: mk(nC), tint: tint2, surface };
 }
@@ -688,7 +693,7 @@ export function makeShrinkWrapMaps(level = 'heavy', size = 1024, seed = 11) {
 }
 
 // ---------- die-cut sleeve: alpha map with a round hole in the middle of the face ----------
-export function makeHoleMask(radiusFrac, size = 2048) {
+export function makeHoleMask(radiusFrac, size = TEX.art) {
   const c = canvas(size), ctx = c.getContext('2d');
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, size, size);

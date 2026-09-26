@@ -227,3 +227,4 @@ details.adv > .slots { margin-top: 6px; }
   .swatch i { width: 34px; height: 34px; }
   .swatch i::after { inset: 13px; }
 }
+.seg button:disabled { opacity: .35; cursor: not-allowed; }
