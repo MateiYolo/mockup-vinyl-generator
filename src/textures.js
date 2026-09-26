@@ -618,8 +618,15 @@ export function makeVarnishMaps(image, size = 2048, boardCanvas = null) {
 // ---------- shrink wrap (cellophane) ----------
 // Heat-shrunk film over the sleeve: taut in the middle, gathered into soft folds that radiate from the corners and
 // pucker along the edges, with a faint milky haze where it creases.
+// level: 'light' = a snug wrap, only a narrow band of small folds along the edges and in the corners;
+// 'heavy' = loose film, folds reaching well into the face.
 // normal: tangent-space normal map; surface: R = transmission (haze), G = roughness.
-export function makeShrinkWrapMaps(size = 1024, seed = 11) {
+const WRAP_LEVELS = {
+  light: { edge: 0.86, edgeAmt: 0.35, corner: 0.5, cornerPow: 6, rim: 0.6 },
+  heavy: { edge: 0.55, edgeAmt: 0.6, corner: 0.9, cornerPow: 2, rim: 1 },
+};
+export function makeShrinkWrapMaps(level = 'heavy', size = 1024, seed = 11) {
+  const W = WRAP_LEVELS[level];
   const S = size, n = makeNoise(seed), n2 = makeNoise(seed + 7), rand = rng(seed);
   const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   // ridged noise: sharp crests where the film folds, soft troughs between
@@ -640,10 +647,10 @@ export function makeShrinkWrapMaps(size = 1024, seed = 11) {
       const X = px * sc, Y = py * sc;
       const wx = (n2.noise(X / 90, Y / 90) - 0.5) * 60, wy = (n2.noise(X / 90 + 31, Y / 90) - 0.5) * 60; // wander
       const along = ((X + wx) * ca + (Y + wy) * sa) / 140, across = (-(X + wx) * sa + (Y + wy) * ca) / 26;
-      const amt = 0.02 + 0.6 * smooth(0.55, 1, e) * (0.3 + 0.6 * n2.noise(X / 120 + 9, Y / 120)) + 0.9 * Math.pow(corner, 2);
+      const amt = 0.02 + W.edgeAmt * smooth(W.edge, 1, e) * (0.3 + 0.6 * n2.noise(X / 120 + 9, Y / 120)) + W.corner * Math.pow(corner, W.cornerPow);
       const r = ridge(across, along) * amt;
       // short puckers right at the rim, perpendicular to the edge
-      const rim = smooth(0.955, 1, e);
+      const rim = W.rim * smooth(0.955, 1, e);
       const pk = rim * Math.pow(1 - Math.abs(n2.noise((Math.abs(u) > Math.abs(v) ? Y : X) / 7, e * 20) * 2 - 1), 4);
       const i = py * S + px;
       fold[i] = Math.min(1, r * 1.4 + pk);

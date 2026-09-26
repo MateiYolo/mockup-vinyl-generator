@@ -332,11 +332,11 @@ const WRAP_GAP = 0.02; // film standing off the board (cm)
 export class Sleeve extends Card {
   constructor(opts) {
     super(SLEEVE.w, SLEEVE.t, { radius: 0.1, ...opts });
-    this.shrink = false;
+    this.shrink = 'off';
+    this.wrapMaps = {}; // per crease level, generated the first time it's picked
     this.dieCut = false;
 
     // shrink wrap: a thin clear film (transmissive, so its reflections stay at full strength) with creases & haze
-    // (its maps are generated the first time it's switched on)
     this.wrapMat = new THREE.MeshPhysicalMaterial({
       color: 0xffffff, metalness: 0, roughness: 1, transmission: 1, thickness: 0, ior: 1.5,
       // a physical 4% film mirrors the whole softbox as a flat grey veil over the artwork; toned down, the
@@ -394,15 +394,17 @@ export class Sleeve extends Card {
     if (wrap) wrap.geometry = faceUp === 'back' ? this.geo.wrapBack : this.geo.wrapFront;
   }
   get meshes() { return [this.mesh, ...this.clones]; }
-  setShrink(on) {
-    this.shrink = on;
-    const m = this.wrapMat;
-    if (on && !m.normalMap) {
-      const wm = makeShrinkWrapMaps();
+  // level: 'off' | 'light' | 'heavy' (how much the film is creased)
+  setShrink(level) {
+    this.shrink = level;
+    const on = level !== 'off', m = this.wrapMat;
+    if (on) {
+      this.wrapMaps[level] ||= makeShrinkWrapMaps(level);
+      const wm = this.wrapMaps[level];
       Object.assign(m, { normalMap: wm.normal, roughnessMap: wm.surface, transmissionMap: wm.surface });
       m.needsUpdate = true;
     }
-    this.meshes.forEach((m) => (m.getObjectByName('wrap').visible = on));
+    this.meshes.forEach((o) => (o.getObjectByName('wrap').visible = on));
   }
   setDieCut(on) {
     this.dieCut = on;

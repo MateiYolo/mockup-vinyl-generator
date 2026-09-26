@@ -17,7 +17,7 @@ const state = {
   vinyl: 'artwork',
   vinylColors: {},
   finish: 'matte',
-  shrink: false, // cellophane shrink wrap around the sleeve
+  shrink: 'off', // cellophane shrink wrap around the sleeve: 'off' | 'light' | 'heavy'
   dieCut: false, // round window in the sleeve showing the label
   edge: '#f2f0ec',
   bg: '#d8cec7',
@@ -319,9 +319,9 @@ function clearSlot(k) {
 // the reflector serves the glossy spot varnish and the shrink wrap (the film's creases only show in a reflection)
 function refreshVarnishUI() {
   const has = !!(images.varnishFront || images.varnishBack);
-  $('varnishRows').style.display = has || state.shrink ? '' : 'none';
+  $('varnishRows').style.display = has || state.shrink !== 'off' ? '' : 'none';
   $('varnishNone').style.display = has ? 'none' : '';
-  stage.setGlint((has && state.varnish) || state.shrink ? state.glint : 0);
+  stage.setGlint((has && state.varnish) || state.shrink !== 'off' ? state.glint : 0);
 }
 let pickKey = null;
 function pickFile(k) { pickKey = k; $('filePick').value = ''; $('filePick').click(); }
@@ -542,7 +542,7 @@ function buildControls() {
   seg('side', () => state.side, (v) => { state.side = v; vinyl.setSide(v); syncDieCut(); });
   seg('finish', () => state.finish, (v) => { state.finish = v; sleeve.setFinish(v); insert.setFinish(v === 'gloss' ? 'satin' : 'matte'); });
   $('edgeColor').oninput = (e) => { state.edge = e.target.value; sleeve.setEdge(state.edge); };
-  seg('shrink', () => (state.shrink ? 'on' : 'off'), (v) => { state.shrink = v === 'on'; sleeve.setShrink(state.shrink); refreshVarnishUI(); });
+  seg('shrink', () => state.shrink, (v) => { state.shrink = v; sleeve.setShrink(v); refreshVarnishUI(); });
   seg('dieCut', () => (state.dieCut ? 'on' : 'off'), (v) => { state.dieCut = v === 'on'; sleeve.setDieCut(state.dieCut); syncDieCut(); });
   seg('varnishOn', () => (state.varnish ? 'on' : 'off'), (v) => { state.varnish = v === 'on'; sleeve.setVarnish({ on: state.varnish }); refreshVarnishUI(); });
   slider('glint', () => state.glint, (x) => { state.glint = x; refreshVarnishUI(); }, (x) => Math.round(x * 100));
@@ -770,6 +770,7 @@ function applySettings(s) {
   // a vinyl saved before a finish was added lacks its colours (or names a finish that no longer exists)
   state.vinylColors = { ...structuredClone(DEFAULTS.vinylColors), ...state.vinylColors };
   if (!VINYLS[state.vinyl]) state.vinyl = DEFAULTS.vinyl;
+  if (!['off', 'light', 'heavy'].includes(state.shrink)) state.shrink = DEFAULTS.shrink;
   Object.assign(seeds, s.seeds);
   if (s.splitAngle !== undefined) splitAngle = s.splitAngle;
   sleeve.setFinish(state.finish);
