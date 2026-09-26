@@ -615,6 +615,86 @@ export function makeVarnishMaps(image, size = 2048, boardCanvas = null) {
   return { mask: mk(maskC), normal: mk(nC), tint: tint2, surface };
 }
 
+// ---------- shrink wrap (cellophane) ----------
+// Heat-shrunk film over the sleeve: taut in the middle, gathered into soft folds that radiate from the corners and
+// pucker along the edges, with a faint milky haze where it creases.
+// normal: tangent-space normal map; surface: R = transmission (haze), G = roughness.
+export function makeShrinkWrapMaps(size = 1024, seed = 11) {
+  const S = size, n = makeNoise(seed), n2 = makeNoise(seed + 7), rand = rng(seed);
+  const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  // ridged noise: sharp crests where the film folds, soft troughs between
+  const ridge = (x, y) => {
+    let s = 0, amp = 0.6, f = 1;
+    for (let o = 0; o < 3; o++) { s += amp * Math.pow(1 - Math.abs(n.noise(x * f, y * f) * 2 - 1), 3); amp *= 0.45; f *= 2.1; }
+    return s;
+  };
+  const h = new Float32Array(S * S), fold = new Float32Array(S * S);
+  const sc = 1024 / S;
+  for (let py = 0; py < S; py++) {
+    for (let px = 0; px < S; px++) {
+      const u = px / S - 0.5, v = py / S - 0.5;
+      // how far out towards an edge / a corner
+      const e = Math.max(Math.abs(u), Math.abs(v)) * 2, corner = (Math.abs(u) * 2) * (Math.abs(v) * 2);
+      // folds run towards the middle: stretch the noise across that direction
+      const a = Math.atan2(v, u), ca = Math.cos(a), sa = Math.sin(a);
+      const X = px * sc, Y = py * sc;
+      const wx = (n2.noise(X / 90, Y / 90) - 0.5) * 60, wy = (n2.noise(X / 90 + 31, Y / 90) - 0.5) * 60; // wander
+      const along = ((X + wx) * ca + (Y + wy) * sa) / 140, across = (-(X + wx) * sa + (Y + wy) * ca) / 26;
+      const amt = 0.02 + 0.6 * smooth(0.55, 1, e) * (0.3 + 0.6 * n2.noise(X / 120 + 9, Y / 120)) + 0.9 * Math.pow(corner, 2);
+      const r = ridge(across, along) * amt;
+      // short puckers right at the rim, perpendicular to the edge
+      const rim = smooth(0.955, 1, e);
+      const pk = rim * Math.pow(1 - Math.abs(n2.noise((Math.abs(u) > Math.abs(v) ? Y : X) / 7, e * 20) * 2 - 1), 4);
+      const i = py * S + px;
+      fold[i] = Math.min(1, r * 1.4 + pk);
+      // slow undulation of the taut film
+      h[i] = r + pk * 0.8 + (n.fbm(X / 260 + 50, Y / 260, 3) - 0.5) * 1.2;
+    }
+  }
+  const c = canvas(S), ctx = c.getContext('2d');
+  const nimg = ctx.createImageData(S, S), simg = ctx.createImageData(S, S);
+  const H = (x, y) => h[Math.min(S - 1, Math.max(0, y)) * S + Math.min(S - 1, Math.max(0, x))];
+  const k = 3.2 * (S / 1024);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const i = y * S + x, o = i * 4;
+      const du = (H(x + 1, y) - H(x - 1, y)) * k;
+      const dv = -(H(x, y + 1) - H(x, y - 1)) * k; // canvas rows go down, texture v goes up
+      const len = Math.hypot(du, dv, 1);
+      nimg.data[o] = (-du / len * 0.5 + 0.5) * 255;
+      nimg.data[o + 1] = (-dv / len * 0.5 + 0.5) * 255;
+      nimg.data[o + 2] = (1 / len * 0.5 + 0.5) * 255;
+      nimg.data[o + 3] = 255;
+      // folds stress-whiten the film and scatter the reflection
+      const f = Math.pow(fold[i], 1.5);
+      simg.data[o] = (1 - 0.2 * f) * 255;
+      simg.data[o + 1] = Math.min(1, 0.04 + 0.25 * f + (rand() - 0.5) * 0.02) * 255;
+      simg.data[o + 2] = 0;
+      simg.data[o + 3] = 255;
+    }
+  }
+  const nC = canvas(S), sC = canvas(S);
+  nC.getContext('2d').putImageData(nimg, 0, 0);
+  sC.getContext('2d').putImageData(simg, 0, 0);
+  const mk = (cv) => { const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.NoColorSpace; t.anisotropy = 8; return t; };
+  return { normal: mk(nC), surface: mk(sC) };
+}
+
+// ---------- die-cut sleeve: alpha map with a round hole in the middle of the face ----------
+export function makeHoleMask(radiusFrac, size = 2048) {
+  const c = canvas(size), ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, radiusFrac * size, 0, Math.PI * 2);
+  ctx.fill();
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.NoColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+
 // ---------- seamless backdrop paper: fine tooth (bump) + faint large-scale mottling (tone) ----------
 export function makeBackdropMaps() {
   const S = 512;

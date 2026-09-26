@@ -374,7 +374,7 @@ export class Stage {
 
     this.light = {
       az: 225, el: 42, softness: 0.6, strength: 0.3, ambient: 0.55, contact: 0.35, master: 0.5, env: 0.42, key: 3.3, sky: 0.95,
-      falloff: 0.5, bounce: 0.5, warmth: 0.55,
+      falloff: 0.5, bounce: 0.5, warmth: 0.55, contrast: 0.4,
     };
     this.photo = { fstop: 5.6, grain: 0.35, vignette: 0.2, seed: 0, bloom: 0.35, ca: 0.3, look: 0.5 };
     this.view = { az: -22, el: 48, lens: 70, zoom: 1 };
@@ -668,6 +668,9 @@ export class Stage {
   setLight(opts) {
     Object.assign(this.light, opts);
     const L = this.light;
+    // contrast = key vs sky balance: 0 = flat and wrapped (overcast), 1 = a single hard source with deep shadows
+    L.key = 2 + 3.25 * L.contrast;
+    L.sky = 1.5 - 1.375 * L.contrast;
     const c = this.box.getCenter(new THREE.Vector3());
     const dir = new THREE.Vector3(Math.sin(L.az * DEG) * Math.cos(L.el * DEG), Math.sin(L.el * DEG), Math.cos(L.az * DEG) * Math.cos(L.el * DEG));
     const size = this.box.getSize(new THREE.Vector3()).length();
